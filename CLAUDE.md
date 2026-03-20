@@ -1,0 +1,37 @@
+# Intune Device Manager
+
+Tauri v2 desktop app for Microsoft Intune device management via MS Graph API.
+
+## Stack
+- **Frontend:** React 19 + TypeScript, Vite
+- **Backend:** Rust (Tauri v2)
+- **API:** MS Graph API (beta endpoint) with client credentials OAuth2
+- **Icons:** MDI (@mdi/js + @mdi/react)
+
+## Project Structure
+- `src/` — React frontend
+  - `src/App.tsx` — Main application component
+  - `src/App.css` — All styles (dark mode via prefers-color-scheme)
+  - `src/components/` — React components (DeviceItem)
+  - `src/hooks/` — localStorage helpers
+  - `src/types/` — Shared TypeScript interfaces
+  - `src/utils/` — Pure utility functions
+- `src-tauri/` — Rust backend
+  - `src-tauri/src/graph.rs` — Graph API client, auth, retry logic, error types
+  - `src-tauri/src/lib.rs` — Tauri commands, state management, keychain
+
+## Build
+```bash
+npm install
+npm run tauri dev     # development
+npm run tauri build   # production
+```
+
+## Key Patterns
+- Access token never touches the frontend — managed entirely in Rust state
+- Token auto-refreshes with 5-minute early expiry buffer
+- Graph API requests use exponential backoff retry (3 attempts, respects Retry-After)
+- Device IDs are validated server-side before use in API URLs
+- Custom device lists and folders stored in localStorage
+- Client secrets stored in OS keychain (macOS Keychain / Windows Credential Manager)
+- Groups collapsed by default, bulk actions require double confirmation for >100 devices
