@@ -2,6 +2,16 @@
 
 A lightweight desktop app for managing Intune-enrolled devices without the overhead of the full Intune portal.
 
+## Download
+
+> **[Latest Release](https://github.com/jacob5948/intune-device-manager/releases/latest)**
+
+| Platform | Download |
+|----------|----------|
+| macOS (Apple Silicon) | [`.dmg`](https://github.com/jacob5948/intune-device-manager/releases/latest/download/Intune.Device.Manager_0.1.0_aarch64.dmg) |
+| macOS (Intel) | [`.dmg`](https://github.com/jacob5948/intune-device-manager/releases/latest/download/Intune.Device.Manager_0.1.0_x64.dmg) |
+| Windows | [`.msi`](https://github.com/jacob5948/intune-device-manager/releases/latest/download/Intune.Device.Manager_0.1.0_x64-setup.msi) · [`.exe`](https://github.com/jacob5948/intune-device-manager/releases/latest/download/Intune.Device.Manager_0.1.0_x64-setup.exe) |
+
 ## Why
 
 The Intune web portal is slow for routine device management tasks. This app gives you a fast, focused interface for the actions you actually use day-to-day — syncing devices, restarting them, and running remediation scripts — individually or in bulk.
