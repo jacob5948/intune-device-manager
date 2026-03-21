@@ -1,6 +1,6 @@
 mod graph;
 
-use graph::{acquire_token, AppError, AppState, CachedToken, Credentials, DeviceInfo, GraphClient};
+use graph::{acquire_token, AppError, AppState, AutopilotDevice, AutopilotImportEntry, AutopilotImportResult, CachedToken, Credentials, DeviceInfo, GraphClient};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -121,6 +121,41 @@ async fn run_remediation(
 }
 
 #[tauri::command]
+async fn get_autopilot_devices(state: State<'_>) -> Result<Vec<AutopilotDevice>, AppError> {
+    let (http_client, token) = get_client_and_token(&state).await?;
+    let client = GraphClient::new(&http_client, token);
+    client.get_autopilot_devices().await
+}
+
+#[tauri::command]
+async fn delete_autopilot_device(state: State<'_>, device_id: String) -> Result<(), AppError> {
+    let (http_client, token) = get_client_and_token(&state).await?;
+    let client = GraphClient::new(&http_client, token);
+    client.delete_autopilot_device(&device_id).await
+}
+
+#[tauri::command]
+async fn update_autopilot_group_tag(
+    state: State<'_>,
+    device_id: String,
+    group_tag: String,
+) -> Result<(), AppError> {
+    let (http_client, token) = get_client_and_token(&state).await?;
+    let client = GraphClient::new(&http_client, token);
+    client.update_autopilot_group_tag(&device_id, &group_tag).await
+}
+
+#[tauri::command]
+async fn import_autopilot_devices(
+    state: State<'_>,
+    entries: Vec<AutopilotImportEntry>,
+) -> Result<Vec<AutopilotImportResult>, AppError> {
+    let (http_client, token) = get_client_and_token(&state).await?;
+    let client = GraphClient::new(&http_client, token);
+    client.import_autopilot_devices(entries).await
+}
+
+#[tauri::command]
 fn save_secret(account: String, secret: String) -> Result<(), AppError> {
     let entry = keyring::Entry::new(KEYRING_SERVICE, &account)
         .map_err(|e| AppError::Keyring(e.to_string()))?;
@@ -164,6 +199,10 @@ pub fn run() {
             sync_device,
             restart_device,
             run_remediation,
+            get_autopilot_devices,
+            delete_autopilot_device,
+            update_autopilot_group_tag,
+            import_autopilot_devices,
             save_secret,
             load_secret,
             delete_secret,

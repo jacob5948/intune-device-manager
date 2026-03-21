@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 const GRAPH_BASE: &str = "https://graph.microsoft.com/beta/deviceManagement";
+const GRAPH_BETA: &str = "https://graph.microsoft.com/beta";
 
 #[derive(Debug, Error)]
 pub enum AppError {
@@ -59,6 +60,74 @@ pub struct DeviceInfo {
     pub last_sync_date_time: Option<String>,
     #[serde(default)]
     pub management_state: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AutopilotDevice {
+    pub id: String,
+    #[serde(default)]
+    pub group_tag: Option<String>,
+    #[serde(default)]
+    pub serial_number: Option<String>,
+    #[serde(default)]
+    pub product_key: Option<String>,
+    #[serde(default)]
+    pub manufacturer: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub enrollment_state: Option<String>,
+    #[serde(default)]
+    pub last_contacted_date_time: Option<String>,
+    #[serde(default)]
+    pub addressable_user_name: Option<String>,
+    #[serde(default)]
+    pub user_principal_name: Option<String>,
+    #[serde(default)]
+    pub managed_device_id: Option<String>,
+    #[serde(default)]
+    pub azure_active_directory_device_id: Option<String>,
+    #[serde(default)]
+    pub azure_ad_device_id: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AutopilotImportEntry {
+    #[serde(default)]
+    pub serial_number: Option<String>,
+    pub hardware_identifier: String,
+    #[serde(default)]
+    pub product_key: Option<String>,
+    #[serde(default)]
+    pub group_tag: Option<String>,
+    #[serde(default)]
+    pub assigned_user_principal_name: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AutopilotImportResult {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub serial_number: Option<String>,
+    #[serde(default)]
+    pub state: Option<AutopilotImportState>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AutopilotImportState {
+    #[serde(default)]
+    pub device_import_status: Option<String>,
+    #[serde(default)]
+    pub device_error_code: Option<i64>,
+    #[serde(default)]
+    pub device_error_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -199,6 +268,103 @@ impl<'a> GraphClient<'a> {
         validate_id(device_id, "device_id")?;
         let url = format!("{}/managedDevices/{}/rebootNow", GRAPH_BASE, device_id);
         self.post_action(&url).await
+    }
+
+    pub async fn get_autopilot_devices(&self) -> Result<Vec<AutopilotDevice>, AppError> {
+        let initial_url = format!(
+            "{}/windowsAutopilotDeviceIdentities?$top=200",
+            GRAPH_BASE
+        );
+        self.get_all_pages::<AutopilotDevice>(&initial_url).await
+    }
+
+    pub async fn delete_autopilot_device(&self, device_id: &str) -> Result<(), AppError> {
+        validate_id(device_id, "autopilot_device_id")?;
+        let url = format!(
+            "{}/windowsAutopilotDeviceIdentities/{}",
+            GRAPH_BASE, device_id
+        );
+
+        let resp = self.request_with_retry(|| {
+            self.client
+                .delete(&url)
+                .bearer_auth(&self.access_token)
+        }).await?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Graph(format!("Delete failed: {}", body)));
+        }
+        Ok(())
+    }
+
+    pub async fn update_autopilot_group_tag(
+        &self,
+        device_id: &str,
+        group_tag: &str,
+    ) -> Result<(), AppError> {
+        validate_id(device_id, "autopilot_device_id")?;
+        let url = format!(
+            "{}/windowsAutopilotDeviceIdentities/{}/updateDeviceProperties",
+            GRAPH_BASE, device_id
+        );
+
+        let body = serde_json::json!({
+            "groupTag": group_tag
+        });
+
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.access_token)
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let resp_body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Graph(format!("Update group tag failed: {}", resp_body)));
+        }
+        Ok(())
+    }
+
+    pub async fn import_autopilot_devices(
+        &self,
+        entries: Vec<AutopilotImportEntry>,
+    ) -> Result<Vec<AutopilotImportResult>, AppError> {
+        // Import each device individually since the batch endpoint has limitations
+        let mut results = Vec::new();
+        for entry in &entries {
+            let url = format!(
+                "{}/deviceManagement/importedWindowsAutopilotDeviceIdentities",
+                GRAPH_BETA
+            );
+
+            let resp = self
+                .client
+                .post(&url)
+                .bearer_auth(&self.access_token)
+                .json(&entry)
+                .send()
+                .await?;
+
+            if resp.status().is_success() {
+                let result: AutopilotImportResult = resp.json().await?;
+                results.push(result);
+            } else {
+                let body = resp.text().await.unwrap_or_default();
+                results.push(AutopilotImportResult {
+                    id: String::new(),
+                    serial_number: entry.serial_number.clone(),
+                    state: Some(AutopilotImportState {
+                        device_import_status: Some("error".to_string()),
+                        device_error_code: None,
+                        device_error_name: Some(body),
+                    }),
+                });
+            }
+        }
+        Ok(results)
     }
 
     pub async fn run_remediation(&self, script_id: &str, device_id: &str) -> Result<(), AppError> {

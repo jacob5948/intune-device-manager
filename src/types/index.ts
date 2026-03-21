@@ -39,6 +39,44 @@ export interface Toast {
   progress?: { current: number; total: number };
 }
 
+/** Autopilot device from Graph API */
+export interface AutopilotDevice {
+  id: string;
+  groupTag: string | null;
+  serialNumber: string | null;
+  productKey: string | null;
+  manufacturer: string | null;
+  model: string | null;
+  enrollmentState: string | null;
+  lastContactedDateTime: string | null;
+  addressableUserName: string | null;
+  userPrincipalName: string | null;
+  managedDeviceId: string | null;
+  azureActiveDirectoryDeviceId: string | null;
+  azureAdDeviceId: string | null;
+  displayName: string | null;
+}
+
+/** Entry for importing an Autopilot device */
+export interface AutopilotImportEntry {
+  serialNumber: string | null;
+  hardwareIdentifier: string;
+  productKey: string | null;
+  groupTag: string | null;
+  assignedUserPrincipalName: string | null;
+}
+
+/** Result of an Autopilot device import */
+export interface AutopilotImportResult {
+  id: string;
+  serialNumber: string | null;
+  state: {
+    deviceImportStatus: string | null;
+    deviceErrorCode: number | null;
+    deviceErrorName: string | null;
+  } | null;
+}
+
 /** OS tab categories */
 export const OS_TABS = ["All", "Windows", "macOS", "iOS", "Android", "Linux"] as const;
 export type OsTab = (typeof OS_TABS)[number];
