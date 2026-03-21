@@ -15,12 +15,18 @@ jobs:
           - platform: macos-latest
             args: --target aarch64-apple-darwin
             rust_target: aarch64-apple-darwin
+            stable_name: Intune-Device-Manager_aarch64.dmg
+            artifact_glob: "*.dmg"
           - platform: macos-latest
             args: --target x86_64-apple-darwin
             rust_target: x86_64-apple-darwin
+            stable_name: Intune-Device-Manager_x64.dmg
+            artifact_glob: "*.dmg"
           - platform: windows-latest
             args: ""
             rust_target: ""
+            stable_name: ""
+            artifact_glob: ""
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -45,6 +51,7 @@ jobs:
         run: npm ci
 
       - name: Build Tauri app
+        id: tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -55,3 +62,33 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Upload stable-name assets (macOS)
+        if: runner.os == 'macOS'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          DMG=$(find src-tauri/target/*/release/bundle/dmg -name "*.dmg" 2>/dev/null | head -1)
+          if [ -n "$DMG" ]; then
+            cp "$DMG" "${{ matrix.stable_name }}"
+            gh release upload "$TAG" "${{ matrix.stable_name }}" --clobber
+          fi
+
+      - name: Upload stable-name assets (Windows)
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $msi = Get-ChildItem -Path "src-tauri/target/release/bundle/msi" -Filter "*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $nsis = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($msi) {
+            Copy-Item $msi.FullName "Intune-Device-Manager_x64-setup.msi"
+            gh release upload $tag "Intune-Device-Manager_x64-setup.msi" --clobber
+          }
+          if ($nsis) {
+            Copy-Item $nsis.FullName "Intune-Device-Manager_x64-setup.exe"
+            gh release upload $tag "Intune-Device-Manager_x64-setup.exe" --clobber
+          }
