@@ -4,13 +4,9 @@ A lightweight desktop app for managing Intune-enrolled devices without the overh
 
 ## Download
 
-> **[Latest Release](https://github.com/jacob5948/intune-device-manager/releases/latest)**
+**[⬇ Download Latest Release](https://github.com/jacob5948/intune-device-manager/releases/latest)**
 
-| Platform | Download |
-|----------|----------|
-| macOS (Apple Silicon) | [`.dmg`](https://github.com/jacob5948/intune-device-manager/releases/latest/download/Intune.Device.Manager_0.1.0_aarch64.dmg) |
-| macOS (Intel) | [`.dmg`](https://github.com/jacob5948/intune-device-manager/releases/latest/download/Intune.Device.Manager_0.1.0_x64.dmg) |
-| Windows | [`.msi`](https://github.com/jacob5948/intune-device-manager/releases/latest/download/Intune.Device.Manager_0.1.0_x64-setup.msi) · [`.exe`](https://github.com/jacob5948/intune-device-manager/releases/latest/download/Intune.Device.Manager_0.1.0_x64-setup.exe) |
+Available builds: macOS (Apple Silicon `.dmg`, Intel `.dmg`) and Windows (`.msi`, `.exe`).
 
 ## Why
 

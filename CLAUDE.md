@@ -35,3 +35,10 @@ npm run tauri build   # production
 - Custom device lists and folders stored in localStorage
 - Client secrets stored in OS keychain (macOS Keychain / Windows Credential Manager)
 - Groups collapsed by default, bulk actions require double confirmation for >100 devices
+
+## Releasing
+1. Bump version in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`
+2. Commit the version bump
+3. Tag with `git tag v<version>` and push with `git push --tags`
+4. GitHub Actions builds macOS (ARM + Intel) and Windows installers and creates a draft release
+5. Go to GitHub Releases and publish the draft
