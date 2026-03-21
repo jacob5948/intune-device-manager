@@ -38,7 +38,8 @@ npm run tauri build   # production
 
 ## Releasing
 1. Bump version in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`
-2. Commit the version bump
-3. Tag with `git tag v<version>` and push with `git push --tags`
-4. GitHub Actions builds macOS (ARM + Intel) and Windows installers and creates a draft release
-5. Go to GitHub Releases and publish the draft
+2. Update download links in `README.md` — replace old version with new version in all asset URLs
+3. Commit the version bump + README update
+4. Tag with `git tag v<version>` and push with `git push --tags`
+5. GitHub Actions builds macOS (ARM + Intel) and Windows installers and creates a draft release
+6. Go to GitHub Releases and publish the draft
