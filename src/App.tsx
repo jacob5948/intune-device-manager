@@ -117,6 +117,35 @@ function App() {
     }
   }, [showToast]);
 
+  // Re-evaluate "missing:" entries in device lists when devices are refreshed
+  useEffect(() => {
+    if (devices.length === 0) return;
+    const hasMissing = deviceLists.some((l) => l.deviceIds.some((id) => id.startsWith("missing:")));
+    if (!hasMissing) return;
+
+    const devicesByName = new Map(devices.map((d) => [d.deviceName.toLowerCase(), d]));
+    let changed = false;
+
+    const updated = deviceLists.map((list) => {
+      const newIds = list.deviceIds.map((id) => {
+        if (!id.startsWith("missing:")) return id;
+        const name = id.substring(8);
+        const dev = devicesByName.get(name.toLowerCase());
+        if (dev) {
+          changed = true;
+          return dev.id;
+        }
+        return id;
+      });
+      return { ...list, deviceIds: newIds };
+    });
+
+    if (changed) {
+      setDeviceLists(updated);
+      saveLists(updated);
+    }
+  }, [devices]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleLogin = async () => {
     if (!tenantId || !clientId || !clientSecret) {
       showToast("Please fill in all fields", "error");
