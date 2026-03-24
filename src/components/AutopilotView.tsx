@@ -35,6 +35,7 @@ function AutopilotView({ showToast, updateProgress, isActive }: AutopilotViewPro
   const [editingGroupTag, setEditingGroupTag] = useState<{ id: string; value: string } | null>(null);
   const [bulkGroupTag, setBulkGroupTag] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [deleteConfirm, setDeleteConfirm] = useState<{ count: number; input: string } | null>(null);
   const wasActive = useRef(false);
 
   const loadAutopilotDevices = useCallback(async () => {
@@ -160,14 +161,16 @@ function AutopilotView({ showToast, updateProgress, isActive }: AutopilotViewPro
     }
   };
 
-  const handleBulkDelete = async () => {
+  const promptBulkDelete = () => {
     const count = checkedDevices.size;
     if (count === 0) return;
-    if (!(await confirm(`Delete ${count} Autopilot device(s)? This cannot be undone.`))) return;
-    if (count > 100) {
-      if (!(await confirm(`You are about to delete ${count} devices. This is a large operation. Are you absolutely sure?`)))
-        return;
-    }
+    setDeleteConfirm({ count, input: "" });
+  };
+
+  const executeBulkDelete = async () => {
+    if (!deleteConfirm) return;
+    const count = deleteConfirm.count;
+    setDeleteConfirm(null);
     let ok = 0,
       fail = 0;
     const ids = [...checkedDevices];
@@ -367,7 +370,7 @@ function AutopilotView({ showToast, updateProgress, isActive }: AutopilotViewPro
             <span className="bulk-info">{checkedDevices.size} selected</span>
           </div>
           <div className="bulk-actions-group">
-            <button className="bulk-btn" onClick={handleBulkDelete}>
+            <button className="bulk-btn" onClick={promptBulkDelete}>
               <Icon path={mdiDelete} size={0.65} />
               <span>Delete</span>
             </button>
@@ -674,6 +677,46 @@ function AutopilotView({ showToast, updateProgress, isActive }: AutopilotViewPro
                 onClick={() => handleUpdateGroupTag(editingGroupTag.id, editingGroupTag.value)}
               >
                 Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Typed confirmation modal for bulk delete */}
+      {deleteConfirm && (
+        <div className="modal-overlay" onClick={() => setDeleteConfirm(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Confirm Bulk Delete</h3>
+            <p className="destructive-confirm-text">
+              You are about to delete <strong>{deleteConfirm.count}</strong> Autopilot device(s). This cannot be undone.
+            </p>
+            <p className="destructive-confirm-text">
+              Type <strong className="destructive-confirm-phrase">I really want to delete {deleteConfirm.count} devices</strong> to confirm:
+            </p>
+            <input
+              className="destructive-confirm-input"
+              type="text"
+              value={deleteConfirm.input}
+              onChange={(e) => setDeleteConfirm({ ...deleteConfirm, input: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && deleteConfirm.input === `I really want to delete ${deleteConfirm.count} devices`)
+                  executeBulkDelete();
+                if (e.key === "Escape") setDeleteConfirm(null);
+              }}
+              placeholder={`I really want to delete ${deleteConfirm.count} devices`}
+              autoFocus
+            />
+            <div className="modal-actions">
+              <button className="btn-secondary" onClick={() => setDeleteConfirm(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn-danger"
+                disabled={deleteConfirm.input !== `I really want to delete ${deleteConfirm.count} devices`}
+                onClick={executeBulkDelete}
+              >
+                Delete {deleteConfirm.count} devices
               </button>
             </div>
           </div>
