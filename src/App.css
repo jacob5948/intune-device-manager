@@ -1492,6 +1492,12 @@ button {
   gap: 8px;
 }
 
+.autopilot-sidebar-header button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .group-tag-icon {
   color: #86868b;
   flex-shrink: 0;
