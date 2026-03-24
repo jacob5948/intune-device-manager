@@ -1142,9 +1142,9 @@ function App() {
       </div>
       )}
 
-      {activeView === "autopilot" && (
-        <AutopilotView showToast={showToast} updateProgress={updateProgress} />
-      )}
+      <div style={{ display: activeView === "autopilot" ? "contents" : "none" }}>
+        <AutopilotView showToast={showToast} updateProgress={updateProgress} isActive={activeView === "autopilot"} />
+      </div>
 
       {activeView === "devices" && checkedDevices.size > 0 && (
         <div className="bulk-bar">

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, confirm } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
@@ -22,9 +22,10 @@ import { formatDate } from "../utils/device";
 interface AutopilotViewProps {
   showToast: (message: string, type: Toast["type"], progress?: { current: number; total: number }) => void;
   updateProgress: (label: string, current: number, total: number) => void;
+  isActive: boolean;
 }
 
-function AutopilotView({ showToast, updateProgress }: AutopilotViewProps) {
+function AutopilotView({ showToast, updateProgress, isActive }: AutopilotViewProps) {
   const [autopilotDevices, setAutopilotDevices] = useState<AutopilotDevice[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<AutopilotDevice | null>(null);
   const [checkedDevices, setCheckedDevices] = useState<Set<string>>(new Set());
@@ -34,6 +35,7 @@ function AutopilotView({ showToast, updateProgress }: AutopilotViewProps) {
   const [editingGroupTag, setEditingGroupTag] = useState<{ id: string; value: string } | null>(null);
   const [bulkGroupTag, setBulkGroupTag] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const wasActive = useRef(false);
 
   const loadAutopilotDevices = useCallback(async () => {
     setLoading(true);
@@ -48,10 +50,27 @@ function AutopilotView({ showToast, updateProgress }: AutopilotViewProps) {
     }
   }, [showToast]);
 
+  const refreshInBackground = useCallback(async () => {
+    try {
+      const result = await invoke<AutopilotDevice[]>("get_autopilot_devices");
+      setAutopilotDevices(result);
+    } catch {
+      // Silent fail for background refresh
+    }
+  }, []);
+
   // Load on first render
   if (!loaded && !loading) {
     loadAutopilotDevices();
   }
+
+  // Background refresh when tab becomes active again
+  useEffect(() => {
+    if (isActive && !wasActive.current && loaded) {
+      refreshInBackground();
+    }
+    wasActive.current = isActive;
+  }, [isActive, loaded, refreshInBackground]);
 
   const filteredDevices = useMemo(() => {
     if (!searchQuery) return autopilotDevices;
