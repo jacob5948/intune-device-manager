@@ -35,6 +35,7 @@ npm run tauri build   # production
 - Custom device lists and folders stored in localStorage
 - Client secrets stored in OS keychain (macOS Keychain / Windows Credential Manager)
 - Groups collapsed by default, bulk actions require double confirmation for >100 devices
+- Bulk destructive actions (e.g. delete) must require the user to type a confirmation phrase: "I really want to delete <n> devices" where <n> is the number of selected devices. Use a modal with a text input, not a native confirm dialog. The delete button must stay disabled until the phrase matches exactly. Apply this pattern to any new bulk destructive action.
 
 ## Releasing
 1. Bump version in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`

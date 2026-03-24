@@ -1313,6 +1313,50 @@ button {
   gap: 8px;
 }
 
+/* Destructive confirmation */
+.destructive-confirm-text {
+  font-size: 13px;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.destructive-confirm-phrase {
+  color: #e53935;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.destructive-confirm-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d2d2d7;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.destructive-confirm-input:focus {
+  outline: none;
+  border-color: #e53935;
+  box-shadow: 0 0 0 2px rgba(229, 57, 53, 0.15);
+}
+
+.btn-danger {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  background: #e53935;
+  color: #fff;
+}
+
+.btn-danger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* Status toast */
 .toast {
   position: fixed;
@@ -1583,6 +1627,16 @@ button {
 
   .modal {
     background: #2d2d2f;
+  }
+
+  .destructive-confirm-input {
+    background: #1c1c1e;
+    border-color: #424245;
+    color: #f5f5f7;
+  }
+
+  .destructive-confirm-input:focus {
+    border-color: #e53935;
   }
 
   .script-item {
