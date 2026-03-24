@@ -169,7 +169,6 @@ function AutopilotView({ showToast, updateProgress, isActive }: AutopilotViewPro
 
   const executeBulkDelete = async () => {
     if (!deleteConfirm) return;
-    const count = deleteConfirm.count;
     setDeleteConfirm(null);
     let ok = 0,
       fail = 0;
