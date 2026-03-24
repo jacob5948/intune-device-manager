@@ -1143,7 +1143,15 @@ function App() {
       )}
 
       <div style={{ display: activeView === "autopilot" ? "contents" : "none" }}>
-        <AutopilotView showToast={showToast} updateProgress={updateProgress} isActive={activeView === "autopilot"} />
+        <AutopilotView showToast={showToast} updateProgress={updateProgress} isActive={activeView === "autopilot"} devices={devices} onNavigateToDevice={(deviceId: string) => {
+          const device = devices.find(d => d.id === deviceId);
+          if (device) {
+            setActiveView("devices");
+            setActiveTab("All");
+            setActiveList(null);
+            setSelectedDevice(device);
+          }
+        }} />
       </div>
 
       {activeView === "devices" && checkedDevices.size > 0 && (

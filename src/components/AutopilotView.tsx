@@ -16,16 +16,18 @@ import {
   mdiSelectionOff,
   mdiLaptop,
 } from "@mdi/js";
-import type { AutopilotDevice, AutopilotImportEntry, AutopilotImportResult, Toast } from "../types";
+import type { AutopilotDevice, AutopilotImportEntry, AutopilotImportResult, DeviceInfo, Toast } from "../types";
 import { formatDate } from "../utils/device";
 
 interface AutopilotViewProps {
   showToast: (message: string, type: Toast["type"], progress?: { current: number; total: number }) => void;
   updateProgress: (label: string, current: number, total: number) => void;
   isActive: boolean;
+  devices: DeviceInfo[];
+  onNavigateToDevice: (deviceId: string) => void;
 }
 
-function AutopilotView({ showToast, updateProgress, isActive }: AutopilotViewProps) {
+function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigateToDevice }: AutopilotViewProps) {
   const [autopilotDevices, setAutopilotDevices] = useState<AutopilotDevice[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<AutopilotDevice | null>(null);
   const [checkedDevices, setCheckedDevices] = useState<Set<string>>(new Set());
@@ -37,6 +39,8 @@ function AutopilotView({ showToast, updateProgress, isActive }: AutopilotViewPro
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [deleteConfirm, setDeleteConfirm] = useState<{ count: number; input: string } | null>(null);
   const wasActive = useRef(false);
+
+  const managedDeviceIds = useMemo(() => new Set(devices.map(d => d.id)), [devices]);
 
   const loadAutopilotDevices = useCallback(async () => {
     setLoading(true);
@@ -638,8 +642,27 @@ function AutopilotView({ showToast, updateProgress, isActive }: AutopilotViewPro
                       "N/A"}
                   </span>
 
-                  <span className="detail-label">Managed Device ID</span>
-                  <span className="detail-value">{selectedDevice.managedDeviceId || "N/A"}</span>
+                  <span className="detail-label">Managed Device</span>
+                  <span className="detail-value">
+                    {selectedDevice.managedDeviceId ? (
+                      managedDeviceIds.has(selectedDevice.managedDeviceId) ? (
+                        <a
+                          href="#"
+                          className="managed-device-link"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            onNavigateToDevice(selectedDevice.managedDeviceId!);
+                          }}
+                        >
+                          {devices.find(d => d.id === selectedDevice.managedDeviceId)?.deviceName || selectedDevice.managedDeviceId}
+                        </a>
+                      ) : (
+                        selectedDevice.managedDeviceId
+                      )
+                    ) : (
+                      "N/A"
+                    )}
+                  </span>
                 </div>
               </div>
             </div>
