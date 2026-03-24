@@ -34,6 +34,7 @@ import type { DeviceInfo, RemediationScript, DeviceList, DeviceListFolder, Toast
 import { loadSavedLists, saveLists, loadSavedFolders, saveFolders, loadSavedScripts, saveScripts } from "./hooks/useLocalStorage";
 import { normalizeOs, isWindows, getOsIcon, extractOu, formatDate } from "./utils/device";
 import DeviceItem from "./components/DeviceItem";
+import AutopilotView from "./components/AutopilotView";
 
 
 function App() {
@@ -70,6 +71,7 @@ function App() {
   const [renamingFolder, setRenamingFolder] = useState<{ id: string; name: string } | null>(null);
   const [checkedLists, setCheckedLists] = useState<Set<string>>(new Set());
   const [reorderMode, setReorderMode] = useState(false);
+  const [activeView, setActiveView] = useState<"devices" | "autopilot">("devices");
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1084,13 +1086,31 @@ function App() {
       <div className="header">
         <h1>Intune Device Manager</h1>
         <div className="header-actions">
-          <button
-            className="btn-secondary btn-small"
-            onClick={() => loadDevices()}
-            disabled={loading}
-          >
-            {loading ? <><span className="spinner" />Refreshing...</> : "Refresh"}
-          </button>
+          <div className="view-switcher">
+            <button
+              className={`view-switch-btn${activeView === "devices" ? " active" : ""}`}
+              onClick={() => setActiveView("devices")}
+            >
+              <Icon path={mdiDevices} size={0.6} />
+              Devices
+            </button>
+            <button
+              className={`view-switch-btn${activeView === "autopilot" ? " active" : ""}`}
+              onClick={() => setActiveView("autopilot")}
+            >
+              <Icon path={mdiSync} size={0.6} />
+              Autopilot
+            </button>
+          </div>
+          {activeView === "devices" && (
+            <button
+              className="btn-secondary btn-small"
+              onClick={() => loadDevices()}
+              disabled={loading}
+            >
+              {loading ? <><span className="spinner" />Refreshing...</> : "Refresh"}
+            </button>
+          )}
           <button
             className="btn-secondary btn-small btn-icon"
             onClick={() => setShowSettings(true)}
@@ -1104,6 +1124,7 @@ function App() {
         </div>
       </div>
 
+      {activeView === "devices" && (
       <div className="tab-bar">
         {OS_TABS.map((tab) => (
           <button
@@ -1119,8 +1140,13 @@ function App() {
           </button>
         ))}
       </div>
+      )}
 
-      {checkedDevices.size > 0 && (
+      {activeView === "autopilot" && (
+        <AutopilotView showToast={showToast} updateProgress={updateProgress} />
+      )}
+
+      {activeView === "devices" && checkedDevices.size > 0 && (
         <div className="bulk-bar">
           <div className="bulk-left">
             <button className="bulk-close" onClick={clearChecked} title="Clear selection">
@@ -1216,6 +1242,7 @@ function App() {
         </div>
       )}
 
+      {activeView === "devices" && (
       <div className="main-content">
         <div className="sidebar">
           {/* Custom lists */}
@@ -1512,6 +1539,7 @@ function App() {
           )}
         </div>
       </div>
+      )}
 
       {/* Remediation modal */}
       {showRemediation && (
