@@ -258,6 +258,28 @@ impl<'a> GraphClient<'a> {
         self.get_all_pages::<DeviceInfo>(&initial_url).await
     }
 
+    pub async fn get_managed_device(&self, device_id: &str) -> Result<DeviceInfo, AppError> {
+        validate_id(device_id, "device_id")?;
+        let url = format!(
+            "{}/managedDevices/{}?$select=id,deviceName,userPrincipalName,operatingSystem,osVersion,complianceState,lastSyncDateTime,managementState",
+            GRAPH_BASE, device_id
+        );
+
+        let resp = self.request_with_retry(|| {
+            self.client
+                .get(&url)
+                .bearer_auth(&self.access_token)
+        }).await?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Graph(body));
+        }
+
+        let device: DeviceInfo = resp.json().await?;
+        Ok(device)
+    }
+
     pub async fn sync_device(&self, device_id: &str) -> Result<(), AppError> {
         validate_id(device_id, "device_id")?;
         let url = format!("{}/managedDevices/{}/syncDevice", GRAPH_BASE, device_id);

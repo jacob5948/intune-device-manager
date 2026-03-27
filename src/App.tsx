@@ -189,6 +189,25 @@ function App() {
     }
   };
 
+  const handleSelectDevice = useCallback((device: DeviceInfo) => {
+    setSelectedDevice(device);
+    // Fetch updated device info in the background
+    invoke<DeviceInfo>("get_device", { deviceId: device.id })
+      .then((updated) => {
+        // Update the device in the devices list
+        setDevices((prev) =>
+          prev.map((d) => (d.id === updated.id ? updated : d))
+        );
+        // Update selectedDevice only if this device is still selected
+        setSelectedDevice((prev) =>
+          prev?.id === updated.id ? updated : prev
+        );
+      })
+      .catch(() => {
+        // Silently ignore — stale data is still shown
+      });
+  }, []);
+
   const handleSync = async (device: DeviceInfo) => {
     showToast(`Syncing ${device.deviceName}...`, "info");
     try {
@@ -1161,7 +1180,7 @@ function App() {
             setActiveView("devices");
             setActiveTab("All");
             setActiveList(null);
-            setSelectedDevice(device);
+            handleSelectDevice(device);
           }
         }} />
       </div>
@@ -1469,7 +1488,7 @@ function App() {
                       isSelected={selectedDevice?.id === device.id}
                       isChecked={checkedDevices.has(device.id)}
                       listNames={deviceListMemberships[device.id]}
-                      onSelect={setSelectedDevice}
+                      onSelect={handleSelectDevice}
                       onToggleCheck={toggleChecked}
                     />
                   ))}

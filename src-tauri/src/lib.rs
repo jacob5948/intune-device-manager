@@ -96,6 +96,13 @@ async fn get_devices(state: State<'_>) -> Result<Vec<DeviceInfo>, AppError> {
 }
 
 #[tauri::command]
+async fn get_device(state: State<'_>, device_id: String) -> Result<DeviceInfo, AppError> {
+    let (http_client, token) = get_client_and_token(&state).await?;
+    let client = GraphClient::new(&http_client, token);
+    client.get_managed_device(&device_id).await
+}
+
+#[tauri::command]
 async fn sync_device(state: State<'_>, device_id: String) -> Result<(), AppError> {
     let (http_client, token) = get_client_and_token(&state).await?;
     let client = GraphClient::new(&http_client, token);
@@ -196,6 +203,7 @@ pub fn run() {
             login,
             logout,
             get_devices,
+            get_device,
             sync_device,
             restart_device,
             run_remediation,
