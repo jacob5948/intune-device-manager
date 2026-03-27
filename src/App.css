@@ -337,6 +337,18 @@ button {
   background: none;
 }
 
+.bulk-btn-danger {
+  color: #ef9a9a;
+}
+
+.bulk-btn-danger:hover {
+  background: rgba(229, 57, 53, 0.25);
+}
+
+.bulk-btn-danger:active {
+  background: rgba(229, 57, 53, 0.35);
+}
+
 /* Actions unavailable */
 .actions-unavailable {
   color: #86868b;
@@ -1148,6 +1160,18 @@ button {
   background: #d0d0d5;
 }
 
+.toolbar-btn-danger {
+  color: #e53935;
+}
+
+.toolbar-btn-danger:hover {
+  background: #fce4ec;
+}
+
+.toolbar-btn-danger:active {
+  background: #f8bbd0;
+}
+
 .toolbar-divider {
   width: 1px;
   height: 20px;
@@ -1759,6 +1783,18 @@ button {
 
   .toolbar-btn:active {
     background: #4a4a4c;
+  }
+
+  .toolbar-btn-danger {
+    color: #ef5350;
+  }
+
+  .toolbar-btn-danger:hover {
+    background: #3a2020;
+  }
+
+  .toolbar-btn-danger:active {
+    background: #4a2020;
   }
 
   .toolbar-divider {

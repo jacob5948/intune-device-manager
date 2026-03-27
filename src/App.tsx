@@ -73,6 +73,8 @@ function App() {
   const [checkedLists, setCheckedLists] = useState<Set<string>>(new Set());
   const [reorderMode, setReorderMode] = useState(false);
   const [activeView, setActiveView] = useState<"devices" | "autopilot">("devices");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -228,6 +230,43 @@ function App() {
     } catch (e) {
       showToast(`Restart failed: ${e}`, "error");
     }
+  };
+
+  const handleDelete = async (device: DeviceInfo) => {
+    if (!(await confirm(`Are you sure you want to delete ${device.deviceName}? This cannot be undone.`))) return;
+    showToast(`Deleting ${device.deviceName}...`, "info");
+    try {
+      await invoke("delete_device", { deviceId: device.id });
+      setDevices((prev) => prev.filter((d) => d.id !== device.id));
+      if (selectedDevice?.id === device.id) setSelectedDevice(null);
+      showToast(`Deleted ${device.deviceName}`, "success");
+    } catch (e) {
+      showToast(`Delete failed: ${e}`, "error");
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    const targets = [...checkedDevices].map((id) => devices.find((d) => d.id === id)).filter(Boolean) as DeviceInfo[];
+    if (targets.length === 0) return;
+    setShowDeleteConfirm(false);
+    setDeleteConfirmInput("");
+    let ok = 0, fail = 0;
+    for (let i = 0; i < targets.length; i++) {
+      updateProgress("Deleting", i + 1, targets.length);
+      try {
+        await invoke("delete_device", { deviceId: targets[i].id });
+        ok++;
+      } catch {
+        fail++;
+      }
+    }
+    if (ok > 0) {
+      const deletedIds = new Set(targets.slice(0, ok).map((d) => d.id));
+      setDevices((prev) => prev.filter((d) => !deletedIds.has(d.id)));
+      if (selectedDevice && deletedIds.has(selectedDevice.id)) setSelectedDevice(null);
+    }
+    showToast(`Delete: ${ok} succeeded, ${fail} failed`, ok > 0 ? "success" : "error");
+    clearChecked();
   };
 
   const openRemediationModal = () => {
@@ -1232,6 +1271,14 @@ function App() {
               <span>Run remediation</span>
             </button>
             <div className="bulk-divider" />
+            <button
+              className="bulk-btn bulk-btn-danger"
+              onClick={() => { setDeleteConfirmInput(""); setShowDeleteConfirm(true); }}
+            >
+              <Icon path={mdiDelete} size={0.65} />
+              <span>Delete</span>
+            </button>
+            <div className="bulk-divider" />
             {activeListObj ? (
               <button
                 className="bulk-btn"
@@ -1535,12 +1582,24 @@ function App() {
                     <Icon path={mdiScriptTextPlay} size={0.65} />
                     <span>Run remediation</span>
                   </button>
+                  <div className="toolbar-divider" />
+                  <button
+                    className="toolbar-btn toolbar-btn-danger"
+                    onClick={() => handleDelete(selectedDevice)}
+                  >
+                    <Icon path={mdiDelete} size={0.65} />
+                    <span>Delete</span>
+                  </button>
                 </div>
               ) : (
-                <div className="action-toolbar action-toolbar-disabled">
-                  <span className="actions-unavailable">
-                    Actions are only available for Windows devices
-                  </span>
+                <div className="action-toolbar">
+                  <button
+                    className="toolbar-btn toolbar-btn-danger"
+                    onClick={() => handleDelete(selectedDevice)}
+                  >
+                    <Icon path={mdiDelete} size={0.65} />
+                    <span>Delete</span>
+                  </button>
                 </div>
               )}
 
@@ -1691,6 +1750,46 @@ function App() {
             <div className="modal-actions">
               <button className="btn-primary" onClick={() => setShowSettings(false)}>
                 Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk delete confirmation modal */}
+      {showDeleteConfirm && (
+        <div className="modal-overlay" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Delete {checkedDevices.size} Device{checkedDevices.size !== 1 ? "s" : ""}</h3>
+            <p className="destructive-confirm-text">
+              This action is permanent and cannot be undone. To confirm, type:{" "}
+              <span className="destructive-confirm-phrase">
+                I really want to delete {checkedDevices.size} devices
+              </span>
+            </p>
+            <input
+              className="destructive-confirm-input"
+              type="text"
+              placeholder="Type the confirmation phrase..."
+              value={deleteConfirmInput}
+              onChange={(e) => setDeleteConfirmInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && deleteConfirmInput === `I really want to delete ${checkedDevices.size} devices`) {
+                  handleBulkDelete();
+                }
+              }}
+              autoFocus
+            />
+            <div className="modal-actions">
+              <button className="btn-secondary" onClick={() => setShowDeleteConfirm(false)}>
+                Cancel
+              </button>
+              <button
+                className="btn-danger"
+                disabled={deleteConfirmInput !== `I really want to delete ${checkedDevices.size} devices`}
+                onClick={handleBulkDelete}
+              >
+                Delete {checkedDevices.size} Device{checkedDevices.size !== 1 ? "s" : ""}
               </button>
             </div>
           </div>

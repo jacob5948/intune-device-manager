@@ -300,6 +300,23 @@ impl<'a> GraphClient<'a> {
         self.get_all_pages::<AutopilotDevice>(&initial_url).await
     }
 
+    pub async fn delete_managed_device(&self, device_id: &str) -> Result<(), AppError> {
+        validate_id(device_id, "device_id")?;
+        let url = format!("{}/managedDevices/{}", GRAPH_BASE, device_id);
+
+        let resp = self.request_with_retry(|| {
+            self.client
+                .delete(&url)
+                .bearer_auth(&self.access_token)
+        }).await?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Graph(format!("Delete failed: {}", body)));
+        }
+        Ok(())
+    }
+
     pub async fn delete_autopilot_device(&self, device_id: &str) -> Result<(), AppError> {
         validate_id(device_id, "autopilot_device_id")?;
         let url = format!(
