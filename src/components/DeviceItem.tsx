@@ -4,17 +4,22 @@ import { mdiCheckboxBlankOutline, mdiCheckboxMarked } from "@mdi/js";
 import type { DeviceInfo } from "../types";
 import { getOsIcon, relativeTime } from "../utils/device";
 
+interface ListTag {
+  name: string;
+  color?: string | null;
+}
+
 interface DeviceItemProps {
   device: DeviceInfo;
   isSelected: boolean;
   isChecked: boolean;
-  listNames?: string[];
+  listTags?: ListTag[];
   onSelect: (device: DeviceInfo) => void;
   onToggleCheck: (deviceId: string) => void;
 }
 
 const DeviceItem = memo<DeviceItemProps>(
-  ({ device, isSelected, isChecked, listNames, onSelect, onToggleCheck }) => {
+  ({ device, isSelected, isChecked, listTags, onSelect, onToggleCheck }) => {
     const isMissing = device.deviceName.startsWith("[Not found]");
     const className = `device-item${isSelected ? " selected" : ""}${isChecked ? " checked" : ""}${isMissing ? " missing" : ""}`;
 
@@ -44,10 +49,17 @@ const DeviceItem = memo<DeviceItemProps>(
             <div className="device-sync">
               {isMissing ? "Device not found in Intune" : relativeTime(device.lastSyncDateTime)}
             </div>
-            {listNames && listNames.length > 0 && (
+            {listTags && listTags.length > 0 && (
               <div className="device-list-tags">
-                {listNames.map((name) => (
-                  <span key={name} className="device-list-tag">{name}</span>
+                {listTags.map((tag) => (
+                  <span
+                    key={tag.name}
+                    className="device-list-tag"
+                    style={tag.color ? {
+                      background: `${tag.color}20`,
+                      color: tag.color,
+                    } : undefined}
+                  >{tag.name}</span>
                 ))}
               </div>
             )}

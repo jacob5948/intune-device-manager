@@ -30,6 +30,7 @@ export interface DeviceList {
   deviceIds: string[];
   folderId?: string | null;
   order: number;
+  color?: string | null;
 }
 
 /** Toast notification */
