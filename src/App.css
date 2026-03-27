@@ -1032,6 +1032,32 @@ button {
   text-overflow: ellipsis;
 }
 
+.device-list-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.device-list-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
+@media (prefers-color-scheme: light) {
+  .device-list-tag {
+    background: rgba(0, 0, 0, 0.06);
+    color: rgba(0, 0, 0, 0.55);
+  }
+}
+
 /* Action toolbar (Intune-style) */
 .action-toolbar {
   display: flex;

@@ -8,12 +8,13 @@ interface DeviceItemProps {
   device: DeviceInfo;
   isSelected: boolean;
   isChecked: boolean;
+  listNames?: string[];
   onSelect: (device: DeviceInfo) => void;
   onToggleCheck: (deviceId: string) => void;
 }
 
 const DeviceItem = memo<DeviceItemProps>(
-  ({ device, isSelected, isChecked, onSelect, onToggleCheck }) => {
+  ({ device, isSelected, isChecked, listNames, onSelect, onToggleCheck }) => {
     const isMissing = device.deviceName.startsWith("[Not found]");
     const className = `device-item${isSelected ? " selected" : ""}${isChecked ? " checked" : ""}${isMissing ? " missing" : ""}`;
 
@@ -43,6 +44,13 @@ const DeviceItem = memo<DeviceItemProps>(
             <div className="device-sync">
               {isMissing ? "Device not found in Intune" : relativeTime(device.lastSyncDateTime)}
             </div>
+            {listNames && listNames.length > 0 && (
+              <div className="device-list-tags">
+                {listNames.map((name) => (
+                  <span key={name} className="device-list-tag">{name}</span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

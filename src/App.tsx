@@ -824,6 +824,18 @@ function App() {
     return counts;
   }, [deviceLists, devices, activeTab]);
 
+  // Map device ID -> list names the device belongs to
+  const deviceListMemberships = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const list of deviceLists) {
+      for (const deviceId of list.deviceIds) {
+        if (!map[deviceId]) map[deviceId] = [];
+        map[deviceId].push(list.name);
+      }
+    }
+    return map;
+  }, [deviceLists]);
+
   const filteredDevices = useMemo(() => {
     let result = devices;
 
@@ -1456,6 +1468,7 @@ function App() {
                       device={device}
                       isSelected={selectedDevice?.id === device.id}
                       isChecked={checkedDevices.has(device.id)}
+                      listNames={deviceListMemberships[device.id]}
                       onSelect={setSelectedDevice}
                       onToggleCheck={toggleChecked}
                     />
