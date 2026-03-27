@@ -28,6 +28,7 @@ import {
   mdiSwapVertical,
   mdiCheckboxBlankOutline,
   mdiCheckboxMarked,
+  mdiPalette,
 } from "@mdi/js";
 import "./App.css";
 import type { DeviceInfo, RemediationScript, DeviceList, DeviceListFolder, Toast } from "./types";
@@ -843,13 +844,13 @@ function App() {
     return counts;
   }, [deviceLists, devices, activeTab]);
 
-  // Map device ID -> list names the device belongs to
+  // Map device ID -> list tags (name + color) the device belongs to
   const deviceListMemberships = useMemo(() => {
-    const map: Record<string, string[]> = {};
+    const map: Record<string, { name: string; color?: string | null }[]> = {};
     for (const list of deviceLists) {
       for (const deviceId of list.deviceIds) {
         if (!map[deviceId]) map[deviceId] = [];
-        map[deviceId].push(list.name);
+        map[deviceId].push({ name: list.name, color: list.color });
       }
     }
     return map;
@@ -970,6 +971,9 @@ function App() {
             size={0.7}
           />
         </div>
+        {list.color && (
+          <span className="list-color-dot" style={{ background: list.color }} />
+        )}
         <Icon path={mdiFormatListBulleted} size={0.6} className="list-item-icon" />
         {renamingList?.id === list.id ? (
           <input
@@ -1487,7 +1491,7 @@ function App() {
                       device={device}
                       isSelected={selectedDevice?.id === device.id}
                       isChecked={checkedDevices.has(device.id)}
-                      listNames={deviceListMemberships[device.id]}
+                      listTags={deviceListMemberships[device.id]}
                       onSelect={handleSelectDevice}
                       onToggleCheck={toggleChecked}
                     />
@@ -1745,6 +1749,47 @@ function App() {
               <Icon path={mdiExport} size={0.6} />
               Export list
             </button>
+            <div className="context-menu-separator" />
+            <div className="context-menu-label">Color</div>
+            <div className="context-menu-colors">
+              {["#ff3b30", "#ff9500", "#ffcc00", "#34c759", "#00c7be", "#007aff", "#5856d6", "#af52de", "#ff2d55"].map((color) => {
+                const currentList = deviceLists.find((l) => l.id === listContextMenu.listId);
+                return (
+                  <button
+                    key={color}
+                    className={`color-swatch${currentList?.color === color ? " active" : ""}`}
+                    style={{ background: color }}
+                    onClick={() => {
+                      const updated = deviceLists.map((l) =>
+                        l.id === listContextMenu.listId ? { ...l, color } : l
+                      );
+                      setDeviceLists(updated);
+                      saveLists(updated);
+                      setListContextMenu(null);
+                    }}
+                  />
+                );
+              })}
+              {(() => {
+                const currentList = deviceLists.find((l) => l.id === listContextMenu.listId);
+                return currentList?.color ? (
+                  <button
+                    className="color-swatch color-swatch-clear"
+                    title="Remove color"
+                    onClick={() => {
+                      const updated = deviceLists.map((l) =>
+                        l.id === listContextMenu.listId ? { ...l, color: null } : l
+                      );
+                      setDeviceLists(updated);
+                      saveLists(updated);
+                      setListContextMenu(null);
+                    }}
+                  >
+                    <Icon path={mdiClose} size={0.4} />
+                  </button>
+                ) : null;
+              })()}
+            </div>
             {listFolders.length > 0 && (
               <>
                 <div className="context-menu-separator" />
