@@ -29,6 +29,11 @@ jobs:
             artifact_glob: ""
 
     runs-on: ${{ matrix.platform }}
+
+    # secrets can't be referenced from a step-level `if`, so surface the check here
+    env:
+      HAS_APPLE_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_API_KEY_P8 != '' }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -50,11 +55,56 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # Signing and notarization only apply to the macOS jobs. Both steps are
+      # skipped when the signing secrets are absent (e.g. on a fork); the build
+      # still succeeds, but the resulting .app is unsigned and macOS reports it
+      # as "damaged" on Apple Silicon.
+      - name: Import Apple signing certificate
+        if: runner.os == 'macOS' && env.HAS_APPLE_SIGNING == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          # Stop the keychain re-locking mid-build (default timeout is 5 minutes)
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import "$CERT_PATH" -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+
+          rm -f "$CERT_PATH"
+          security find-identity -v -p codesigning
+
+      - name: Write App Store Connect API key
+        if: runner.os == 'macOS' && env.HAS_APPLE_SIGNING == 'true'
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          echo "$APPLE_API_KEY_P8" | base64 --decode \
+            > "$RUNNER_TEMP/private_keys/AuthKey_${APPLE_API_KEY}.p8"
+
       - name: Build Tauri app
         id: tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Code signing (macOS). Empty on other platforms, which Tauri ignores.
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Notarization via App Store Connect API key
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Intune Device Manager ${{ github.ref_name }}"

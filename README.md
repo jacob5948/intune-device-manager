@@ -12,6 +12,17 @@ A lightweight desktop app for managing Intune-enrolled devices without the overh
 | macOS (Intel) | [`.dmg`](https://github.com/jacob5948/intune-device-manager/releases/latest/download/Intune-Device-Manager_x64.dmg) |
 | Windows | [`.msi`](https://github.com/jacob5948/intune-device-manager/releases/latest/download/Intune-Device-Manager_x64-setup.msi) · [`.exe`](https://github.com/jacob5948/intune-device-manager/releases/latest/download/Intune-Device-Manager_x64-setup.exe) |
 
+The macOS builds are signed with an Apple Developer ID certificate and notarized by Apple,
+so they open normally on both Apple Silicon and Intel.
+
+Releases up to and including **v0.2.0** were unsigned. On Apple Silicon macOS reports those
+as *"damaged and can't be opened"* — download a newer release, or clear the quarantine flag
+on the old one:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Intune Device Manager.app"
+```
+
 ## Why
 
 The Intune web portal is slow for routine device management tasks. This app gives you a fast, focused interface for the actions you actually use day-to-day — syncing devices, restarting them, and running remediation scripts — individually or in bulk.
