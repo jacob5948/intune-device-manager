@@ -29,6 +29,7 @@ import {
   mdiCheckboxBlankOutline,
   mdiCheckboxMarked,
   mdiPalette,
+  mdiCellphoneRemove,
 } from "@mdi/js";
 import "./App.css";
 import type { DeviceInfo, RemediationScript, DeviceList, DeviceListFolder, Toast } from "./types";
@@ -57,6 +58,7 @@ function App() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [checkedDevices, setCheckedDevices] = useState<Set<string>>(new Set());
   const [showSettings, setShowSettings] = useState(false);
+  const [wipeConfirm, setWipeConfirm] = useState<{ targets: DeviceInfo[]; input: string } | null>(null);
   const [newScriptId, setNewScriptId] = useState("");
   const [newScriptName, setNewScriptName] = useState("");
   const [deviceLists, setDeviceLists] = useState<DeviceList[]>(loadSavedLists);
@@ -228,6 +230,47 @@ function App() {
     } catch (e) {
       showToast(`Restart failed: ${e}`, "error");
     }
+  };
+
+  // ── Wipe (factory reset) ──
+  const wipePhrase = (count: number) =>
+    `I really want to wipe ${count} device${count === 1 ? "" : "s"}`;
+
+  const promptWipe = (targets: DeviceInfo[]) => {
+    if (targets.length === 0) return;
+    setWipeConfirm({ targets, input: "" });
+  };
+
+  const executeWipe = async () => {
+    if (!wipeConfirm) return;
+    const targets = wipeConfirm.targets;
+    if (wipeConfirm.input !== wipePhrase(targets.length)) return;
+    setWipeConfirm(null);
+    if (!(await confirmLargeBatch(targets.length, "wipe"))) return;
+
+    if (targets.length === 1) {
+      showToast(`Wiping ${targets[0].deviceName}...`, "info");
+      try {
+        await invoke("wipe_device", { deviceId: targets[0].id });
+        showToast(`Wipe initiated for ${targets[0].deviceName}`, "success");
+      } catch (e) {
+        showToast(`Wipe failed: ${e}`, "error");
+      }
+      return;
+    }
+
+    let ok = 0, fail = 0;
+    for (let i = 0; i < targets.length; i++) {
+      updateProgress("Wiping", i + 1, targets.length);
+      try {
+        await invoke("wipe_device", { deviceId: targets[i].id });
+        ok++;
+      } catch {
+        fail++;
+      }
+    }
+    showToast(`Wipe: ${ok} succeeded, ${fail} failed`, ok > 0 ? "success" : "error");
+    clearChecked();
   };
 
   const openRemediationModal = () => {
@@ -651,6 +694,12 @@ function App() {
     showToast(`Restart: ${ok} succeeded, ${fail} failed`, ok > 0 ? "success" : "error");
   };
 
+  const handleListWipe = (listId: string) => {
+    const targets = getListWindowsDevices(listId);
+    if (targets.length === 0) { showToast("No Windows devices in this list", "error"); return; }
+    promptWipe(targets);
+  };
+
   const handleListRemediation = (listId: string) => {
     const targets = getListWindowsDevices(listId);
     if (targets.length === 0) { showToast("No Windows devices in this list", "error"); return; }
@@ -802,6 +851,10 @@ function App() {
     }
     showToast(`Restart: ${ok} succeeded, ${fail} failed`, ok > 0 ? "success" : "error");
     clearChecked();
+  };
+
+  const handleBulkWipe = () => {
+    promptWipe(checkedWindowsDevices);
   };
 
   const handleBulkRemediation = () => {
@@ -1232,6 +1285,15 @@ function App() {
               <span>Run remediation</span>
             </button>
             <div className="bulk-divider" />
+            <button
+              className="bulk-btn bulk-btn-danger"
+              onClick={handleBulkWipe}
+              disabled={checkedWindowsDevices.length === 0}
+            >
+              <Icon path={mdiCellphoneRemove} size={0.65} />
+              <span>Wipe</span>
+            </button>
+            <div className="bulk-divider" />
             {activeListObj ? (
               <button
                 className="bulk-btn"
@@ -1535,6 +1597,14 @@ function App() {
                     <Icon path={mdiScriptTextPlay} size={0.65} />
                     <span>Run remediation</span>
                   </button>
+                  <div className="toolbar-divider" />
+                  <button
+                    className="toolbar-btn toolbar-btn-danger"
+                    onClick={() => promptWipe([selectedDevice])}
+                  >
+                    <Icon path={mdiCellphoneRemove} size={0.65} />
+                    <span>Wipe</span>
+                  </button>
                 </div>
               ) : (
                 <div className="action-toolbar action-toolbar-disabled">
@@ -1583,6 +1653,58 @@ function App() {
           )}
         </div>
       </div>
+      )}
+
+      {/* Typed confirmation modal for wipe */}
+      {wipeConfirm && (
+        <div className="modal-overlay" onClick={() => setWipeConfirm(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Confirm Wipe</h3>
+            <p className="destructive-confirm-text">
+              You are about to wipe <strong>{wipeConfirm.targets.length}</strong> device
+              {wipeConfirm.targets.length === 1 ? "" : "s"}. This factory resets the device
+              {wipeConfirm.targets.length === 1 ? "" : "s"}, erasing all data, and cannot be undone.
+            </p>
+            <div className="wipe-target-list">
+              {wipeConfirm.targets.slice(0, 10).map((d) => (
+                <div key={d.id} className="wipe-target">{d.deviceName}</div>
+              ))}
+              {wipeConfirm.targets.length > 10 && (
+                <div className="wipe-target">
+                  …and {wipeConfirm.targets.length - 10} more
+                </div>
+              )}
+            </div>
+            <p className="destructive-confirm-text">
+              Type <strong className="destructive-confirm-phrase">{wipePhrase(wipeConfirm.targets.length)}</strong> to confirm:
+            </p>
+            <input
+              className="destructive-confirm-input"
+              type="text"
+              value={wipeConfirm.input}
+              onChange={(e) => setWipeConfirm({ ...wipeConfirm, input: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && wipeConfirm.input === wipePhrase(wipeConfirm.targets.length))
+                  executeWipe();
+                if (e.key === "Escape") setWipeConfirm(null);
+              }}
+              placeholder={wipePhrase(wipeConfirm.targets.length)}
+              autoFocus
+            />
+            <div className="modal-actions">
+              <button className="btn-secondary" onClick={() => setWipeConfirm(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn-danger"
+                disabled={wipeConfirm.input !== wipePhrase(wipeConfirm.targets.length)}
+                onClick={executeWipe}
+              >
+                Wipe {wipeConfirm.targets.length} device{wipeConfirm.targets.length === 1 ? "" : "s"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Remediation modal */}
@@ -1729,6 +1851,13 @@ function App() {
             >
               <Icon path={mdiScriptTextPlay} size={0.6} />
               Run remediation
+            </button>
+            <button
+              className="context-menu-item context-menu-danger"
+              onClick={() => { handleListWipe(listContextMenu.listId); setListContextMenu(null); }}
+            >
+              <Icon path={mdiCellphoneRemove} size={0.6} />
+              Wipe all Windows devices
             </button>
             <div className="context-menu-separator" />
             <button

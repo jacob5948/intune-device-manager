@@ -117,6 +117,13 @@ async fn restart_device(state: State<'_>, device_id: String) -> Result<(), AppEr
 }
 
 #[tauri::command]
+async fn wipe_device(state: State<'_>, device_id: String) -> Result<(), AppError> {
+    let (http_client, token) = get_client_and_token(&state).await?;
+    let client = GraphClient::new(&http_client, token);
+    client.wipe_device(&device_id).await
+}
+
+#[tauri::command]
 async fn run_remediation(
     state: State<'_>,
     script_id: String,
@@ -206,6 +213,7 @@ pub fn run() {
             get_device,
             sync_device,
             restart_device,
+            wipe_device,
             run_remediation,
             get_autopilot_devices,
             delete_autopilot_device,

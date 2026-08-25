@@ -292,6 +292,17 @@ impl<'a> GraphClient<'a> {
         self.post_action(&url).await
     }
 
+    pub async fn wipe_device(&self, device_id: &str) -> Result<(), AppError> {
+        validate_id(device_id, "device_id")?;
+        let url = format!("{}/managedDevices/{}/wipe", GRAPH_BASE, device_id);
+        let body = serde_json::json!({
+            "keepEnrollmentData": false,
+            "keepUserData": false,
+            "useProtectedWipe": false,
+        });
+        self.post_action_json(&url, &body).await
+    }
+
     pub async fn get_autopilot_devices(&self) -> Result<Vec<AutopilotDevice>, AppError> {
         let initial_url = format!(
             "{}/windowsAutopilotDeviceIdentities?$top=200",
@@ -456,6 +467,22 @@ impl<'a> GraphClient<'a> {
         if !resp.status().is_success() {
             let body = resp.text().await.unwrap_or_default();
             return Err(AppError::Graph(body));
+        }
+
+        Ok(())
+    }
+
+    async fn post_action_json(&self, url: &str, body: &serde_json::Value) -> Result<(), AppError> {
+        let resp = self.request_with_retry(|| {
+            self.client
+                .post(url)
+                .bearer_auth(&self.access_token)
+                .json(body)
+        }).await?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(AppError::Graph(text));
         }
 
         Ok(())

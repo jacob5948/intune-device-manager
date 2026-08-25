@@ -337,6 +337,14 @@ button {
   background: none;
 }
 
+.bulk-btn-danger {
+  color: #ffb3ae;
+}
+
+.bulk-btn-danger:hover {
+  background: rgba(255, 59, 48, 0.35);
+}
+
 /* Actions unavailable */
 .actions-unavailable {
   color: #86868b;
@@ -1410,6 +1418,22 @@ button {
   font-size: 12px;
 }
 
+/* Wipe target preview */
+.wipe-target-list {
+  max-height: 140px;
+  overflow-y: auto;
+  border: 1px solid #d2d2d7;
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 12px;
+}
+
+.wipe-target {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #6e6e73;
+}
+
 .destructive-confirm-input {
   width: 100%;
   padding: 8px 10px;
@@ -1711,6 +1735,14 @@ button {
 
   .modal {
     background: #2d2d2f;
+  }
+
+  .wipe-target-list {
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .wipe-target {
+    color: #a1a1a6;
   }
 
   .destructive-confirm-input {
