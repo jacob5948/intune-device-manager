@@ -51,6 +51,8 @@ pub struct DeviceInfo {
     #[serde(default)]
     pub user_principal_name: Option<String>,
     #[serde(default)]
+    pub serial_number: Option<String>,
+    #[serde(default)]
     pub operating_system: Option<String>,
     #[serde(default)]
     pub os_version: Option<String>,
@@ -252,7 +254,7 @@ impl<'a> GraphClient<'a> {
 
     pub async fn get_managed_devices(&self) -> Result<Vec<DeviceInfo>, AppError> {
         let initial_url = format!(
-            "{}/managedDevices?$select=id,deviceName,userPrincipalName,operatingSystem,osVersion,complianceState,lastSyncDateTime,managementState&$top=200",
+            "{}/managedDevices?$select=id,deviceName,userPrincipalName,serialNumber,operatingSystem,osVersion,complianceState,lastSyncDateTime,managementState&$top=200",
             GRAPH_BASE
         );
         self.get_all_pages::<DeviceInfo>(&initial_url).await
@@ -261,7 +263,7 @@ impl<'a> GraphClient<'a> {
     pub async fn get_managed_device(&self, device_id: &str) -> Result<DeviceInfo, AppError> {
         validate_id(device_id, "device_id")?;
         let url = format!(
-            "{}/managedDevices/{}?$select=id,deviceName,userPrincipalName,operatingSystem,osVersion,complianceState,lastSyncDateTime,managementState",
+            "{}/managedDevices/{}?$select=id,deviceName,userPrincipalName,serialNumber,operatingSystem,osVersion,complianceState,lastSyncDateTime,managementState",
             GRAPH_BASE, device_id
         );
 

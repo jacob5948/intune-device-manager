@@ -67,3 +67,67 @@ export const relativeTime = (dateStr: string | null): string => {
   const months = Math.floor(days / 30);
   return `${months}mo ago`;
 };
+
+/**
+ * Split pasted or file text into device identifiers (names or serial numbers).
+ * Accepts newline-, comma-, semicolon- and whitespace-separated input, so an Excel
+ * column paste and a comma-separated line both work. De-duplicates case-insensitively.
+ */
+export const parseIdentifiers = (text: string): string[] => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of text.split(/[\s,;]+/)) {
+    const token = raw.trim().replace(/^["']|["']$/g, "").trim();
+    if (!token) continue;
+    const key = token.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(token);
+  }
+  return result;
+};
+
+/**
+ * Match identifiers against devices by device name first, then serial number.
+ * A serial can map to more than one managed device (re-enrolled hardware), so every
+ * hit is kept; ids are de-duplicated across the whole batch.
+ */
+export const matchIdentifiers = (
+  devices: DeviceInfo[],
+  tokens: string[]
+): { matchedIds: string[]; unmatched: string[] } => {
+  const byName = new Map<string, DeviceInfo[]>();
+  const bySerial = new Map<string, DeviceInfo[]>();
+  const push = (map: Map<string, DeviceInfo[]>, key: string | null, device: DeviceInfo) => {
+    if (!key) return;
+    const k = key.trim().toLowerCase();
+    if (!k) return;
+    const existing = map.get(k);
+    if (existing) existing.push(device);
+    else map.set(k, [device]);
+  };
+  for (const device of devices) {
+    push(byName, device.deviceName, device);
+    push(bySerial, device.serialNumber, device);
+  }
+
+  const matchedIds: string[] = [];
+  const seenIds = new Set<string>();
+  const unmatched: string[] = [];
+
+  for (const token of tokens) {
+    const key = token.toLowerCase();
+    const hits = byName.get(key) ?? bySerial.get(key);
+    if (!hits) {
+      unmatched.push(token);
+      continue;
+    }
+    for (const device of hits) {
+      if (seenIds.has(device.id)) continue;
+      seenIds.add(device.id);
+      matchedIds.push(device.id);
+    }
+  }
+
+  return { matchedIds, unmatched };
+};

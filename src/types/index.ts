@@ -3,6 +3,7 @@ export interface DeviceInfo {
   id: string;
   deviceName: string;
   userPrincipalName: string | null;
+  serialNumber: string | null;
   operatingSystem: string | null;
   osVersion: string | null;
   complianceState: string | null;

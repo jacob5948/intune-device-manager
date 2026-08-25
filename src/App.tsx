@@ -18,6 +18,7 @@ import {
   mdiFormatListBulleted,
   mdiPlaylistRemove,
   mdiImport,
+  mdiBarcodeScan,
   mdiExport,
   mdiSelectAll,
   mdiSelectionOff,
@@ -33,7 +34,8 @@ import {
 import "./App.css";
 import type { DeviceInfo, RemediationScript, DeviceList, DeviceListFolder, Toast } from "./types";
 import { loadSavedLists, saveLists, loadSavedFolders, saveFolders, loadSavedScripts, saveScripts } from "./hooks/useLocalStorage";
-import { normalizeOs, isWindows, getOsIcon, extractOu, formatDate } from "./utils/device";
+import { normalizeOs, isWindows, getOsIcon, extractOu, formatDate, parseIdentifiers, matchIdentifiers } from "./utils/device";
+import { extractIdentifierText } from "./utils/csv";
 import DeviceItem from "./components/DeviceItem";
 import AutopilotView from "./components/AutopilotView";
 
@@ -58,6 +60,12 @@ function App() {
   const [checkedDevices, setCheckedDevices] = useState<Set<string>>(new Set());
   const [showSettings, setShowSettings] = useState(false);
   const [wipeConfirm, setWipeConfirm] = useState<{ targets: DeviceInfo[]; input: string } | null>(null);
+  const [serialImport, setSerialImport] = useState<{
+    text: string;
+    listName: string;
+    targetListId: string | null;
+    unmatched: string[] | null;
+  } | null>(null);
   const [newScriptId, setNewScriptId] = useState("");
   const [newScriptName, setNewScriptName] = useState("");
   const [deviceLists, setDeviceLists] = useState<DeviceList[]>(loadSavedLists);
@@ -432,33 +440,17 @@ function App() {
       const ext = (filePath as string).split(".").pop()?.toLowerCase();
 
       if (ext === "txt" || ext === "csv") {
-        // Plain text: one device name per line, or comma-separated
-        const names = contents
-          .split(/[\n,]/)
-          .map((n) => n.trim())
-          .filter((n) => n.length > 0);
+        // Plain text: device names or serial numbers, one per line or comma-separated
+        const tokens = parseIdentifiers(extractIdentifierText(contents));
 
-        if (names.length === 0) {
-          showToast("No device names found in file", "error");
+        if (tokens.length === 0) {
+          showToast("No device names or serial numbers found in file", "error");
           return;
         }
 
-        // Match names to devices (case-insensitive)
-        const devicesByName = new Map(devices.map((d) => [d.deviceName.toLowerCase(), d]));
-        const matchedIds: string[] = [];
-        const unmatchedNames: string[] = [];
+        const { matchedIds, unmatched: unmatchedNames } = matchIdentifiers(devices, tokens);
 
-        for (const name of names) {
-          const dev = devicesByName.get(name.toLowerCase());
-          if (dev) {
-            matchedIds.push(dev.id);
-          } else {
-            // Generate a placeholder ID for unmatched names
-            unmatchedNames.push(name);
-          }
-        }
-
-        // For unmatched names, create stable IDs so they show as "not found"
+        // For unmatched entries, create stable IDs so they show as "not found"
         const unmatchedIds = unmatchedNames.map((name) => `missing:${name}`);
 
         const listName = (filePath as string).split("/").pop()?.replace(/\.(txt|csv)$/i, "") || "Imported";
@@ -508,6 +500,98 @@ function App() {
       }
     } catch (e) {
       showToast(`Import failed: ${e}`, "error");
+    }
+  };
+
+  // ── Import by serial number / device name ──
+
+  const openSerialImport = () => {
+    setSerialImport({ text: "", listName: "", targetListId: null, unmatched: null });
+  };
+
+  const serialImportMatches = useMemo(() => {
+    if (!serialImport) return { tokens: [], matchedIds: [], unmatched: [] };
+    const tokens = parseIdentifiers(serialImport.text);
+    return { tokens, ...matchIdentifiers(devices, tokens) };
+  }, [serialImport?.text, devices]);
+
+  const loadSerialImportFile = async () => {
+    if (!serialImport) return;
+    try {
+      const filePath = await open({
+        title: "Open serial number list",
+        filters: [{ name: "Text or CSV", extensions: ["txt", "csv"] }],
+        multiple: false,
+      });
+      if (!filePath) return;
+      const contents = await readTextFile(filePath as string);
+      const fileName = (filePath as string).split(/[/\\]/).pop()?.replace(/\.(txt|csv)$/i, "") || "";
+      setSerialImport((prev) => prev && {
+        ...prev,
+        text: extractIdentifierText(contents),
+        listName: prev.listName || fileName,
+        unmatched: null,
+      });
+    } catch (e) {
+      showToast(`Could not read file: ${e}`, "error");
+    }
+  };
+
+  const runSerialImport = () => {
+    if (!serialImport) return;
+    const { tokens, matchedIds, unmatched } = serialImportMatches;
+    if (tokens.length === 0) return;
+
+    // Unmatched entries keep the "missing:" convention so they render as [Not found] rows
+    const importedIds = [...matchedIds, ...unmatched.map((t) => `missing:${t}`)];
+
+    let updated: DeviceList[];
+    let listLabel: string;
+
+    if (serialImport.targetListId) {
+      const target = deviceLists.find((l) => l.id === serialImport.targetListId);
+      if (!target) { showToast("That list no longer exists", "error"); return; }
+      listLabel = target.name;
+      updated = deviceLists.map((l) =>
+        l.id === target.id ? { ...l, deviceIds: [...new Set([...l.deviceIds, ...importedIds])] } : l
+      );
+    } else {
+      const name = serialImport.listName.trim();
+      if (!name) { showToast("List name is required", "error"); return; }
+      listLabel = name;
+      const maxOrder = deviceLists.filter((l) => !l.folderId).reduce((m, l) => Math.max(m, l.order ?? 0), -1);
+      updated = [...deviceLists, {
+        id: crypto.randomUUID(),
+        name,
+        deviceIds: importedIds,
+        folderId: null,
+        order: maxOrder + 1,
+      }];
+    }
+
+    setDeviceLists(updated);
+    saveLists(updated);
+
+    const msg = unmatched.length > 0
+      ? `"${listLabel}": ${matchedIds.length} matched, ${unmatched.length} not found`
+      : `"${listLabel}": ${matchedIds.length} device(s) imported`;
+    showToast(msg, unmatched.length > 0 ? "info" : "success");
+
+    if (unmatched.length > 0) {
+      // Keep the modal open so the unmatched tags can be reviewed and copied
+      setSerialImport((prev) => prev && { ...prev, unmatched });
+    } else {
+      setSerialImport(null);
+    }
+  };
+
+  const copyUnmatched = async () => {
+    if (!serialImport?.unmatched) return;
+    try {
+      await navigator.clipboard.writeText(serialImport.unmatched.join("\n"));
+      showToast("Copied to clipboard", "success");
+    } catch {
+      showToast("Could not copy to clipboard", "error");
     }
   };
 
@@ -926,6 +1010,7 @@ function App() {
             ? `[Not found] ${id.substring(8)}`
             : `[Not found] ${id.substring(0, 8)}...`,
           userPrincipalName: null,
+          serialNumber: null,
           operatingSystem: null,
           osVersion: null,
           complianceState: null,
@@ -951,7 +1036,8 @@ function App() {
         result = result.filter((d) => {
           const name = d.deviceName.toLowerCase();
           const user = (d.userPrincipalName || "").toLowerCase();
-          return terms.some((q) => name.includes(q) || user.includes(q));
+          const serial = (d.serialNumber || "").toLowerCase();
+          return terms.some((q) => name.includes(q) || user.includes(q) || serial.includes(q));
         });
       }
     }
@@ -1377,6 +1463,13 @@ function App() {
                 >
                   <Icon path={mdiImport} size={0.55} />
                 </button>
+                <button
+                  className="lists-header-btn"
+                  onClick={openSerialImport}
+                  title="Import list by serial number / device name"
+                >
+                  <Icon path={mdiBarcodeScan} size={0.55} />
+                </button>
                 {deviceLists.length > 0 && (
                   <button
                     className="lists-header-btn"
@@ -1628,6 +1721,10 @@ function App() {
                   <span className="detail-value">
                     {selectedDevice.userPrincipalName || "N/A"}
                   </span>
+                  <span className="detail-label">Serial</span>
+                  <span className="detail-value">
+                    {selectedDevice.serialNumber || "N/A"}
+                  </span>
                   <span className="detail-label">OS</span>
                   <span className="detail-value">
                     {selectedDevice.operatingSystem} {selectedDevice.osVersion}
@@ -1652,6 +1749,116 @@ function App() {
           )}
         </div>
       </div>
+      )}
+
+      {/* Import list by serial number / device name */}
+      {serialImport && (
+        <div className="modal-overlay" onClick={() => setSerialImport(null)}>
+          <div className="modal serial-import-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Import by Serial Number</h3>
+            <p className="serial-import-hint">
+              Paste service tags or device names — one per line, or separated by commas.
+              Serial numbers are matched against the devices loaded from Intune.
+            </p>
+
+            <textarea
+              className="serial-import-textarea"
+              value={serialImport.text}
+              onChange={(e) =>
+                setSerialImport({ ...serialImport, text: e.target.value, unmatched: null })
+              }
+              placeholder={"7XKQ2H3\n9PLM4K2\n..."}
+              spellCheck={false}
+              autoFocus
+            />
+
+            <div className="serial-import-status">
+              <button className="btn-link" onClick={loadSerialImportFile}>
+                <Icon path={mdiImport} size={0.6} />
+                Open file…
+              </button>
+              <span className="serial-import-counts">
+                {serialImportMatches.tokens.length} entered ·{" "}
+                <strong>{serialImportMatches.matchedIds.length}</strong> matched ·{" "}
+                {serialImportMatches.unmatched.length} not found
+              </span>
+            </div>
+
+            <div className="serial-import-dest">
+              <label className="serial-import-radio">
+                <input
+                  type="radio"
+                  checked={serialImport.targetListId === null}
+                  onChange={() => setSerialImport({ ...serialImport, targetListId: null })}
+                />
+                New list
+              </label>
+              {serialImport.targetListId === null && (
+                <input
+                  className="serial-import-name"
+                  type="text"
+                  value={serialImport.listName}
+                  onChange={(e) => setSerialImport({ ...serialImport, listName: e.target.value })}
+                  placeholder="List name"
+                />
+              )}
+              {deviceLists.length > 0 && (
+                <>
+                  <label className="serial-import-radio">
+                    <input
+                      type="radio"
+                      checked={serialImport.targetListId !== null}
+                      onChange={() =>
+                        setSerialImport({ ...serialImport, targetListId: deviceLists[0].id })
+                      }
+                    />
+                    Add to existing
+                  </label>
+                  {serialImport.targetListId !== null && (
+                    <select
+                      className="serial-import-select"
+                      value={serialImport.targetListId}
+                      onChange={(e) =>
+                        setSerialImport({ ...serialImport, targetListId: e.target.value })
+                      }
+                    >
+                      {deviceLists.map((l) => (
+                        <option key={l.id} value={l.id}>{l.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </>
+              )}
+            </div>
+
+            {serialImport.unmatched && serialImport.unmatched.length > 0 && (
+              <div className="serial-import-unmatched">
+                <div className="serial-import-unmatched-head">
+                  <span>Not found in Intune ({serialImport.unmatched.length})</span>
+                  <button className="btn-link" onClick={copyUnmatched}>Copy</button>
+                </div>
+                <div className="serial-import-unmatched-list">
+                  {serialImport.unmatched.map((tag) => (
+                    <div key={tag} className="serial-import-unmatched-item">{tag}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="modal-actions">
+              <button className="btn-secondary" onClick={() => setSerialImport(null)}>
+                {serialImport.unmatched ? "Close" : "Cancel"}
+              </button>
+              <button
+                className="btn-primary"
+                disabled={serialImportMatches.tokens.length === 0}
+                onClick={runSerialImport}
+              >
+                Import {serialImportMatches.tokens.length || ""}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Typed confirmation modal for wipe */}

@@ -1405,6 +1405,127 @@ button {
   gap: 8px;
 }
 
+/* Serial number import modal */
+.serial-import-modal {
+  max-width: 520px;
+  overflow-y: auto;
+}
+
+.serial-import-hint {
+  font-size: 12px;
+  color: #6e6e73;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.serial-import-textarea {
+  width: 100%;
+  min-height: 130px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid #d2d2d7;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.serial-import-textarea:focus {
+  outline: none;
+  border-color: #0071e3;
+  box-shadow: 0 0 0 2px rgba(0, 113, 227, 0.15);
+}
+
+.serial-import-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0 14px;
+}
+
+.serial-import-counts {
+  font-size: 12px;
+  color: #6e6e73;
+}
+
+.btn-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  color: #0071e3;
+  cursor: pointer;
+}
+
+.btn-link:hover {
+  text-decoration: underline;
+}
+
+.serial-import-dest {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.serial-import-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.serial-import-name,
+.serial-import-select {
+  flex: 1;
+  min-width: 140px;
+  padding: 6px 8px;
+  border: 1px solid #d2d2d7;
+  border-radius: 6px;
+  font-size: 12px;
+  background: #fff;
+}
+
+.serial-import-name:focus,
+.serial-import-select:focus {
+  outline: none;
+  border-color: #0071e3;
+}
+
+.serial-import-unmatched {
+  border: 1px solid #d2d2d7;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 14px;
+}
+
+.serial-import-unmatched-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+.serial-import-unmatched-list {
+  max-height: 110px;
+  overflow-y: auto;
+}
+
+.serial-import-unmatched-item {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #6e6e73;
+}
+
 /* Destructive confirmation */
 .destructive-confirm-text {
   font-size: 13px;
@@ -1735,6 +1856,28 @@ button {
 
   .modal {
     background: #2d2d2f;
+  }
+
+  .serial-import-textarea,
+  .serial-import-name,
+  .serial-import-select {
+    background: #1c1c1e;
+    border-color: #424245;
+    color: #f5f5f7;
+  }
+
+  .serial-import-hint,
+  .serial-import-counts,
+  .serial-import-unmatched-item {
+    color: #a1a1a6;
+  }
+
+  .serial-import-unmatched {
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .btn-link {
+    color: #0a84ff;
   }
 
   .wipe-target-list {

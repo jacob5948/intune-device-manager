@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, confirm } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
+import { parseCsvLine } from "../utils/csv";
 import Icon from "@mdi/react";
 import {
   mdiDelete,
@@ -320,30 +321,6 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
   };
 
   // Simple CSV line parser that handles quoted fields
-  const parseCsvLine = (line: string): string[] => {
-    const result: string[] = [];
-    let current = "";
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
-          current += '"';
-          i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (ch === "," && !inQuotes) {
-        result.push(current);
-        current = "";
-      } else {
-        current += ch;
-      }
-    }
-    result.push(current);
-    return result;
-  };
-
   const enrollmentBadge = (state: string | null) => {
     const s = (state || "unknown").toLowerCase();
     if (s === "enrolled") return <span className="badge compliant">Enrolled</span>;
