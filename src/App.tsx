@@ -28,7 +28,6 @@ import {
   mdiSwapVertical,
   mdiCheckboxBlankOutline,
   mdiCheckboxMarked,
-  mdiPalette,
   mdiCellphoneRemove,
 } from "@mdi/js";
 import "./App.css";
