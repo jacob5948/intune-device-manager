@@ -55,6 +55,40 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # Fail fast on an incomplete signing setup: notarization is the very last
+      # thing the bundler does, so a missing secret would otherwise surface only
+      # after a full release build.
+      - name: Check Apple signing secrets
+        if: runner.os == 'macOS' && env.HAS_APPLE_SIGNING == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          missing=""
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD \
+                      APPLE_SIGNING_IDENTITY APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_P8; do
+            eval "value=\${$name:-}"
+            if [ -z "$value" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing or empty repository secrets:$missing"
+            exit 1
+          fi
+          # The Key ID and Issuer ID are fixed-format identifiers; a wrong value
+          # here fails only at the notarization step, minutes into the build.
+          if [ ${#APPLE_API_KEY} -lt 3 ]; then
+            echo "::error::APPLE_API_KEY should be the App Store Connect Key ID (e.g. ABCD123456), got ${#APPLE_API_KEY} characters"
+            exit 1
+          fi
+          echo "All Apple signing secrets present."
+
       # Signing and notarization only apply to the macOS jobs. Both steps are
       # skipped when the signing secrets are absent (e.g. on a fork); the build
       # still succeeds, but the resulting .app is unsigned and macOS reports it
