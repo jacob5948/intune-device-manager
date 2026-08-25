@@ -44,4 +44,8 @@ npm run tauri build   # production
 4. GitHub Actions builds macOS (ARM + Intel) and Windows installers, uploads stable-name assets, and creates a draft release
 5. Go to GitHub Releases and publish the draft
 
+The macOS builds are signed with a Developer ID certificate and notarized by Apple in CI.
+The certificate expires **1 February 2027** — see `docs/macos-signing.md` for the secrets,
+the renewal runbook, and the gotchas that cost a build each.
+
 Note: README download links use version-independent filenames (e.g. `Intune-Device-Manager_aarch64.dmg`) that the CI uploads alongside the versioned ones. No README updates needed on release.
