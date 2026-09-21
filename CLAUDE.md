@@ -45,6 +45,11 @@ npm run tauri build   # production
 4. GitHub Actions builds macOS (ARM + Intel) and Windows installers, uploads stable-name assets, and creates a draft release
 5. Go to GitHub Releases and publish the draft
 
+Only a `v*` tag push publishes a release. A manual `workflow_dispatch` run builds the
+installers and attaches them as workflow artifacts instead — it must never create a tag
+or a release (a `tagName` of `github.ref_name` on a dispatch run is what created the
+stray `main` tag and release that had to be cleaned up).
+
 The macOS builds are signed with a Developer ID certificate and notarized by Apple in CI.
 The certificate expires **1 February 2027** — see `docs/macos-signing.md` for the secrets,
 the renewal runbook, and the gotchas that cost a build each.

@@ -140,15 +140,32 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Intune Device Manager ${{ github.ref_name }}"
+          # Only a v* tag push publishes a release. On a manual dispatch
+          # github.ref_name is the branch, so passing it through here made
+          # tauri-action create a "main" tag and a "main" release and pile every
+          # manual build's assets into it. An empty tagName means build only.
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Intune Device Manager {0}', github.ref_name) || '' }}
           releaseBody: "See the assets below to download the installer for your platform."
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
 
+      # Manual runs still hand back installers — as workflow artifacts, which
+      # expire on their own, rather than as a permanent release.
+      - name: Upload build artifacts (manual runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.platform }}-${{ matrix.rust_target != '' && matrix.rust_target || 'x64' }}
+          path: |
+            src-tauri/target/*/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: ignore
+
       - name: Upload stable-name assets (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -160,7 +177,7 @@ jobs:
           fi
 
       - name: Upload stable-name assets (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
