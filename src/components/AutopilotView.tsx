@@ -254,8 +254,9 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
         return;
       }
 
-      // Parse header to find column indices
-      const header = lines[0].split(",").map((h) => h.trim().toLowerCase().replace(/['"]/g, ""));
+      // Parse header to find column indices. Uses the same parser as the data rows —
+      // a plain split(",") mis-indexes every column when a header cell is quoted.
+      const header = parseCsvLine(lines[0]).map((h) => h.trim().toLowerCase().replace(/['"]/g, ""));
       const serialIdx = header.findIndex(
         (h) => h.includes("serial") && h.includes("number")
       );
@@ -320,7 +321,6 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
     }
   };
 
-  // Simple CSV line parser that handles quoted fields
   const enrollmentBadge = (state: string | null) => {
     const s = (state || "unknown").toLowerCase();
     if (s === "enrolled") return <span className="badge compliant">Enrolled</span>;
@@ -398,10 +398,10 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
             <button
               className="btn-secondary btn-small"
               onClick={handleImportCsv}
-              title="Import devices from CSV"
+              title="Import Autopilot hardware hashes from a CSV"
             >
               <Icon path={mdiImport} size={0.6} />
-              Import CSV
+              Import hardware hashes…
             </button>
           </div>
 
