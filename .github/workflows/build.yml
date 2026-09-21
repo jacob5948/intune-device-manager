@@ -139,6 +139,11 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
+          # Updater bundle signing (minisign). Separate from the Apple identity
+          # above: Apple's signature satisfies Gatekeeper, this one is what the
+          # in-app updater verifies before installing a downloaded build.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           # Only a v* tag push publishes a release. On a manual dispatch
           # github.ref_name is the branch, so passing it through here made
@@ -150,6 +155,11 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+          # latest.json is the updater's manifest; each matrix job merges its own
+          # platform into the copy already on the release. Windows updates are
+          # served as NSIS, so the .exe is the entry that gets written.
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
 
       # Manual runs still hand back installers — as workflow artifacts, which
       # expire on their own, rather than as a permanent release.

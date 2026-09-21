@@ -33,6 +33,7 @@ npm run tauri build   # production
 - Graph API requests use exponential backoff retry (3 attempts, respects Retry-After)
 - Device IDs are validated server-side before use in API URLs
 - Custom device lists and folders stored in localStorage
+- In-app updates use `tauri-plugin-updater` against `latest.json` on the newest published GitHub release; `src/hooks/useAppUpdate.ts` owns the state machine and `UpdateBanner` the UI
 - CSV export columns are defined once in `src/utils/csv.ts` (`CSV_COLUMNS`); add a column there and it appears in the picker. The last selection is remembered in localStorage
 - Client secrets stored in OS keychain (macOS Keychain / Windows Credential Manager)
 - Groups collapsed by default, bulk actions require double confirmation for >100 devices
@@ -44,6 +45,12 @@ npm run tauri build   # production
 3. Tag with `git tag v<version>` and push with `git push --tags`
 4. GitHub Actions builds macOS (ARM + Intel) and Windows installers, uploads stable-name assets, and creates a draft release
 5. Go to GitHub Releases and publish the draft
+
+Updater bundles are signed with a minisign key held in the `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secrets — separate from the Apple identity, and
+unrecoverable: without it, installed copies can never auto-update again. The matching public
+key is in `tauri.conf.json`. Because the updater reads `latest.json` from the newest
+**published** release, a draft ships to nobody until it is published.
 
 Only a `v*` tag push publishes a release. A manual `workflow_dispatch` run builds the
 installers and attaches them as workflow artifacts instead — it must never create a tag

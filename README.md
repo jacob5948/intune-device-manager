@@ -60,6 +60,7 @@ Produces a `.dmg` on macOS and `.msi`/`.exe` on Windows.
 - **CSV export** — export the selected devices with your choice of columns (OS, last sync, serial, compliance, …)
 - **Remediation scripts** — store script IDs locally and run them on demand
 - **Secure credentials** — client secret stored in macOS Keychain or Windows Credential Manager
+- **In-app updates** — checks GitHub Releases on launch and installs signed updates on request
 - **Dark mode** — follows system preference
 
 ## Tech Stack

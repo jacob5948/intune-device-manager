@@ -37,7 +37,9 @@ import type { DeviceInfo, RemediationScript, DeviceList, DeviceListFolder, Toast
 import { loadSavedLists, saveLists, loadSavedFolders, saveFolders, loadSavedScripts, saveScripts, loadCsvColumns, saveCsvColumns } from "./hooks/useLocalStorage";
 import { normalizeOs, isWindows, getOsIcon, extractOu, formatDate, parseIdentifiers, matchIdentifiers } from "./utils/device";
 import { extractIdentifierText, buildDeviceCsv, CSV_COLUMNS } from "./utils/csv";
+import { useAppUpdate } from "./hooks/useAppUpdate";
 import DeviceItem from "./components/DeviceItem";
+import UpdateBanner from "./components/UpdateBanner";
 import AutopilotView from "./components/AutopilotView";
 
 
@@ -84,6 +86,8 @@ function App() {
   const [checkedLists, setCheckedLists] = useState<Set<string>>(new Set());
   const [reorderMode, setReorderMode] = useState(false);
   const [activeView, setActiveView] = useState<"devices" | "autopilot">("devices");
+
+  const update = useAppUpdate();
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1300,6 +1304,7 @@ function App() {
   // Main app
   return (
     <div className="app">
+      <UpdateBanner update={update} />
       <div className="header">
         <h1>Intune Device Manager</h1>
         <div className="header-actions">
@@ -2130,6 +2135,43 @@ function App() {
                   <div className="settings-empty">No scripts configured yet.</div>
                 )}
               </div>
+            </div>
+
+            <div className="settings-section">
+              <h4>Updates</h4>
+              <p className="settings-hint">
+                Updates are downloaded from GitHub Releases and verified before they are
+                installed. The app also checks once shortly after it starts.
+              </p>
+              <div className="settings-update-row">
+                <span className="settings-version">
+                  Version {update.currentVersion || "—"}
+                </span>
+                <button
+                  className="btn-secondary btn-small"
+                  onClick={() => update.checkForUpdate()}
+                  disabled={update.status === "checking" || update.status === "downloading"}
+                >
+                  {update.status === "checking" ? (
+                    <><span className="spinner" />Checking...</>
+                  ) : (
+                    "Check for updates"
+                  )}
+                </button>
+              </div>
+              {update.status === "upToDate" && (
+                <div className="settings-update-status">You are on the latest version.</div>
+              )}
+              {update.status === "available" && (
+                <div className="settings-update-status">
+                  Version {update.newVersion} is available — see the banner at the top.
+                </div>
+              )}
+              {update.status === "error" && (
+                <div className="settings-update-status settings-update-error">
+                  Could not check for updates: {update.error}
+                </div>
+              )}
             </div>
 
             <div className="modal-actions">

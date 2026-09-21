@@ -1526,6 +1526,94 @@ button {
   color: #6e6e73;
 }
 
+/* Update banner */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px;
+  background: #0071e3;
+  color: #fff;
+  font-size: 12px;
+}
+
+.update-banner-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.update-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.update-banner .btn-primary {
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  color: #fff;
+}
+
+.update-banner .btn-primary:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.update-banner-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: #fff;
+  opacity: 0.8;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.update-banner-close:hover {
+  opacity: 1;
+}
+
+.update-banner-progress {
+  flex: 1;
+  max-width: 220px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.3);
+  overflow: hidden;
+}
+
+.update-banner-progress-fill {
+  height: 100%;
+  background: #fff;
+  transition: width 0.2s ease;
+}
+
+/* Updates section in Settings */
+.settings-update-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-version {
+  font-size: 12px;
+  color: #6e6e73;
+}
+
+.settings-update-status {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #6e6e73;
+}
+
+.settings-update-error {
+  color: #c00;
+}
+
 /* CSV export column picker */
 .csv-export-modal {
   max-width: 520px;
@@ -1948,6 +2036,15 @@ button {
 
   .csv-export-columns {
     border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .settings-version,
+  .settings-update-status {
+    color: #a1a1a6;
+  }
+
+  .settings-update-error {
+    color: #ff6b6b;
   }
 
   .csv-export-column:hover {
