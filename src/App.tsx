@@ -30,12 +30,13 @@ import {
   mdiCheckboxBlankOutline,
   mdiCheckboxMarked,
   mdiCellphoneRemove,
+  mdiFileDelimitedOutline,
 } from "@mdi/js";
 import "./App.css";
 import type { DeviceInfo, RemediationScript, DeviceList, DeviceListFolder, Toast } from "./types";
-import { loadSavedLists, saveLists, loadSavedFolders, saveFolders, loadSavedScripts, saveScripts } from "./hooks/useLocalStorage";
+import { loadSavedLists, saveLists, loadSavedFolders, saveFolders, loadSavedScripts, saveScripts, loadCsvColumns, saveCsvColumns } from "./hooks/useLocalStorage";
 import { normalizeOs, isWindows, getOsIcon, extractOu, formatDate, parseIdentifiers, matchIdentifiers } from "./utils/device";
-import { extractIdentifierText } from "./utils/csv";
+import { extractIdentifierText, buildDeviceCsv, CSV_COLUMNS } from "./utils/csv";
 import DeviceItem from "./components/DeviceItem";
 import AutopilotView from "./components/AutopilotView";
 
@@ -66,6 +67,7 @@ function App() {
     targetListId: string | null;
     unmatched: string[] | null;
   } | null>(null);
+  const [csvExport, setCsvExport] = useState<{ targets: DeviceInfo[]; columns: string[] } | null>(null);
   const [newScriptId, setNewScriptId] = useState("");
   const [newScriptName, setNewScriptName] = useState("");
   const [deviceLists, setDeviceLists] = useState<DeviceList[]>(loadSavedLists);
@@ -419,6 +421,48 @@ function App() {
 
       await writeTextFile(filePath, JSON.stringify(exportData, null, 2));
       showToast(`Exported "${list.name}"`, "success");
+    } catch (e) {
+      showToast(`Export failed: ${e}`, "error");
+    }
+  };
+
+  // ── CSV export of selected devices ──
+
+  /** Open the column picker for the currently checked devices */
+  const openCsvExport = () => {
+    if (checkedList.length === 0) return;
+    // Rows go out in the same name order the device list shows, not Graph's order
+    const targets = [...checkedList].sort((a, b) =>
+      a.deviceName.localeCompare(b.deviceName, undefined, { sensitivity: "base" })
+    );
+    setCsvExport({ targets, columns: loadCsvColumns() });
+  };
+
+  const toggleCsvColumn = (key: string) => {
+    setCsvExport((prev) => prev && {
+      ...prev,
+      columns: prev.columns.includes(key)
+        ? prev.columns.filter((k) => k !== key)
+        : [...prev.columns, key],
+    });
+  };
+
+  const runCsvExport = async () => {
+    if (!csvExport || csvExport.columns.length === 0) return;
+    const { targets, columns } = csvExport;
+    try {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const filePath = await save({
+        title: "Export Devices to CSV",
+        defaultPath: `intune-devices-${stamp}.csv`,
+        filters: [{ name: "CSV", extensions: ["csv"] }],
+      });
+      if (!filePath) return;
+
+      await writeTextFile(filePath, buildDeviceCsv(targets, columns));
+      saveCsvColumns(columns);
+      setCsvExport(null);
+      showToast(`Exported ${targets.length} device(s) to CSV`, "success");
     } catch (e) {
       showToast(`Export failed: ${e}`, "error");
     }
@@ -1371,6 +1415,15 @@ function App() {
             </button>
             <div className="bulk-divider" />
             <button
+              className="bulk-btn"
+              onClick={openCsvExport}
+              disabled={checkedList.length === 0}
+            >
+              <Icon path={mdiFileDelimitedOutline} size={0.65} />
+              <span>Export CSV</span>
+            </button>
+            <div className="bulk-divider" />
+            <button
               className="bulk-btn bulk-btn-danger"
               onClick={handleBulkWipe}
               disabled={checkedWindowsDevices.length === 0}
@@ -1855,6 +1908,69 @@ function App() {
                 onClick={runSerialImport}
               >
                 Import {serialImportMatches.tokens.length || ""}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CSV export column picker */}
+      {csvExport && (
+        <div className="modal-overlay" onClick={() => setCsvExport(null)}>
+          <div className="modal csv-export-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Export {csvExport.targets.length} Device{csvExport.targets.length === 1 ? "" : "s"} to CSV</h3>
+            <p className="csv-export-hint">
+              Pick the details to include. Columns are written in the order shown, and your
+              selection is remembered for next time.
+            </p>
+
+            <div className="csv-export-toolbar">
+              <button
+                className="btn-link"
+                onClick={() => setCsvExport({ ...csvExport, columns: CSV_COLUMNS.map((c) => c.key) })}
+              >
+                Select all
+              </button>
+              <button
+                className="btn-link"
+                onClick={() => setCsvExport({ ...csvExport, columns: [] })}
+              >
+                Clear
+              </button>
+              <span className="csv-export-counts">
+                {csvExport.columns.length} of {CSV_COLUMNS.length} columns
+              </span>
+            </div>
+
+            <div className="csv-export-columns">
+              {CSV_COLUMNS.map((col) => {
+                const checked = csvExport.columns.includes(col.key);
+                return (
+                  <label key={col.key} className="csv-export-column">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleCsvColumn(col.key)}
+                    />
+                    <span className="csv-export-column-label">{col.label}</span>
+                    <span className="csv-export-column-sample">
+                      {csvExport.targets[0] ? col.value(csvExport.targets[0]) : ""}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="modal-actions">
+              <button className="btn-secondary" onClick={() => setCsvExport(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn-primary"
+                disabled={csvExport.columns.length === 0}
+                onClick={runCsvExport}
+              >
+                Export CSV
               </button>
             </div>
           </div>

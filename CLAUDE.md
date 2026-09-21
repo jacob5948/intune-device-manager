@@ -33,6 +33,7 @@ npm run tauri build   # production
 - Graph API requests use exponential backoff retry (3 attempts, respects Retry-After)
 - Device IDs are validated server-side before use in API URLs
 - Custom device lists and folders stored in localStorage
+- CSV export columns are defined once in `src/utils/csv.ts` (`CSV_COLUMNS`); add a column there and it appears in the picker. The last selection is remembered in localStorage
 - Client secrets stored in OS keychain (macOS Keychain / Windows Credential Manager)
 - Groups collapsed by default, bulk actions require double confirmation for >100 devices
 - Bulk destructive actions (e.g. delete) must require the user to type a confirmation phrase: "I really want to delete <n> devices" where <n> is the number of selected devices. Use a modal with a text input, not a native confirm dialog. The delete button must stay disabled until the phrase matches exactly. Apply this pattern to any new bulk destructive action.

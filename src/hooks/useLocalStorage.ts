@@ -1,8 +1,10 @@
 import type { RemediationScript, DeviceList, DeviceListFolder } from "../types";
+import { CSV_COLUMNS, DEFAULT_CSV_COLUMN_KEYS } from "../utils/csv";
 
 const SCRIPTS_KEY = "remediationScripts";
 const LISTS_KEY = "deviceLists";
 const FOLDERS_KEY = "deviceListFolders";
+const CSV_COLUMNS_KEY = "csvExportColumns";
 
 export const loadSavedLists = (): DeviceList[] => {
   try {
@@ -61,4 +63,24 @@ export const loadSavedScripts = (): RemediationScript[] => {
 
 export const saveScripts = (scripts: RemediationScript[]) => {
   localStorage.setItem(SCRIPTS_KEY, JSON.stringify(scripts));
+};
+
+/** Columns last used for a CSV export, falling back to the defaults */
+export const loadCsvColumns = (): string[] => {
+  try {
+    const raw = localStorage.getItem(CSV_COLUMNS_KEY);
+    if (!raw) return DEFAULT_CSV_COLUMN_KEYS;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return DEFAULT_CSV_COLUMN_KEYS;
+    // Drop keys from older versions so a stale entry cannot leave the dialog empty
+    const known = new Set(CSV_COLUMNS.map((c) => c.key));
+    const valid = parsed.filter((k): k is string => typeof k === "string" && known.has(k));
+    return valid.length > 0 ? valid : DEFAULT_CSV_COLUMN_KEYS;
+  } catch {
+    return DEFAULT_CSV_COLUMN_KEYS;
+  }
+};
+
+export const saveCsvColumns = (keys: string[]) => {
+  localStorage.setItem(CSV_COLUMNS_KEY, JSON.stringify(keys));
 };

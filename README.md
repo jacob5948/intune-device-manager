@@ -57,6 +57,7 @@ Produces a `.dmg` on macOS and `.msi`/`.exe` on Windows.
 - **Bulk actions** — select multiple devices or entire lists and act on them at once
 - **Custom lists & folders** — organize devices into reorderable lists, group lists into folders
 - **Import/export** — JSON, CSV, or plain-text device name lists
+- **CSV export** — export the selected devices with your choice of columns (OS, last sync, serial, compliance, …)
 - **Remediation scripts** — store script IDs locally and run them on demand
 - **Secure credentials** — client secret stored in macOS Keychain or Windows Credential Manager
 - **Dark mode** — follows system preference
