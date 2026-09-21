@@ -68,15 +68,40 @@ export const relativeTime = (dateStr: string | null): string => {
   return `${months}mo ago`;
 };
 
+/** Which device field a plain identifier list is built from */
+export type IdentifierField = "deviceName" | "serialNumber";
+
+export interface ParseIdentifiersOptions {
+  /**
+   * Split on line breaks only (then on , and ; within a line that has them),
+   * so a device name containing a space survives. Used for CSV columns and file
+   * input, where each row is already one identifier.
+   */
+  perLine?: boolean;
+}
+
 /**
  * Split pasted or file text into device identifiers (names or serial numbers).
- * Accepts newline-, comma-, semicolon- and whitespace-separated input, so an Excel
- * column paste and a comma-separated line both work. De-duplicates case-insensitively.
+ *
+ * By default accepts newline-, comma-, semicolon- and whitespace-separated input, so an
+ * Excel column paste and a comma-separated line both work — at the cost of never being
+ * able to read a name with a space in it. `perLine` trades that away for structured
+ * input. De-duplicates case-insensitively, keeping the first-seen casing.
  */
-export const parseIdentifiers = (text: string): string[] => {
+export const parseIdentifiers = (
+  text: string,
+  options: ParseIdentifiersOptions = {}
+): string[] => {
+  const { perLine = false } = options;
+  // A BOM survives trimming and would corrupt the first token of our own exports
+  const body = text.replace(/^\uFEFF/, "");
+  const candidates = perLine
+    ? body.split(/\r?\n/).flatMap((line) => (/[,;]/.test(line) ? line.split(/[,;]/) : [line]))
+    : body.split(/[\s,;]+/);
+
   const seen = new Set<string>();
   const result: string[] = [];
-  for (const raw of text.split(/[\s,;]+/)) {
+  for (const raw of candidates) {
     const token = raw.trim().replace(/^["']|["']$/g, "").trim();
     if (!token) continue;
     const key = token.toLowerCase();
@@ -85,6 +110,62 @@ export const parseIdentifiers = (text: string): string[] => {
     result.push(token);
   }
   return result;
+};
+
+export interface IdentifierListResult {
+  /** One identifier per line, CRLF terminated and with no BOM; empty when nothing qualified */
+  text: string;
+  written: number;
+  /** Devices with nothing in the chosen field, and so nothing to write */
+  skipped: number;
+}
+
+/**
+ * Render devices as a bare identifier list — the re-importable counterpart to the
+ * detail CSV, and the inverse of `parseIdentifiers`.
+ *
+ * `extraTokens` carries the raw tokens of list entries that were never found in Intune,
+ * so exporting and re-importing a partially-unmatched list preserves it intact rather
+ * than quietly dropping the gaps.
+ *
+ * Deliberately no BOM: `parseIdentifiers` would fold it into the first identifier.
+ */
+export const buildIdentifierList = (
+  devices: DeviceInfo[],
+  field: IdentifierField,
+  extraTokens: string[] = []
+): IdentifierListResult => {
+  const seen = new Set<string>();
+  const values: string[] = [];
+  let skipped = 0;
+
+  const push = (value: string): boolean => {
+    const key = value.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    values.push(value);
+    return true;
+  };
+
+  for (const device of devices) {
+    const value = (field === "deviceName" ? device.deviceName : device.serialNumber)?.trim() ?? "";
+    if (!value) {
+      skipped++;
+      continue;
+    }
+    push(value);
+  }
+
+  for (const token of extraTokens) {
+    const value = token.trim();
+    if (value) push(value);
+  }
+
+  return {
+    text: values.length > 0 ? values.join("\r\n") + "\r\n" : "",
+    written: values.length,
+    skipped,
+  };
 };
 
 /**

@@ -56,8 +56,8 @@ Produces a `.dmg` on macOS and `.msi`/`.exe` on Windows.
 - **Remote actions** — Sync, Restart, Run Remediation on Windows devices
 - **Bulk actions** — select multiple devices or entire lists and act on them at once
 - **Custom lists & folders** — organize devices into reorderable lists, group lists into folders
-- **Import/export** — JSON, CSV, or plain-text device name lists
-- **CSV export** — export the selected devices with your choice of columns (OS, last sync, serial, compliance, …)
+- **Import** — paste device names or service tags, or open a .txt, .csv or .json file; what it contains is detected by reading it. Live match counts before you commit, and a review of anything not found
+- **Export** — the selection, the current view, or a saved list, as a detail CSV with your choice of columns, a plain re-importable list of names or serials, or a saved-list JSON backup. To a file or straight to the clipboard
 - **Remediation scripts** — store script IDs locally and run them on demand
 - **Secure credentials** — client secret stored in macOS Keychain or Windows Credential Manager
 - **In-app updates** — checks GitHub Releases on launch and installs signed updates on request

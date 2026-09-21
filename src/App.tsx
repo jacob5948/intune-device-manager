@@ -1,7 +1,6 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { save, open, confirm } from "@tauri-apps/plugin-dialog";
-import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import Icon from "@mdi/react";
 import {
   mdiDevices,
@@ -18,7 +17,6 @@ import {
   mdiFormatListBulleted,
   mdiPlaylistRemove,
   mdiImport,
-  mdiBarcodeScan,
   mdiExport,
   mdiSelectAll,
   mdiSelectionOff,
@@ -30,17 +28,18 @@ import {
   mdiCheckboxBlankOutline,
   mdiCheckboxMarked,
   mdiCellphoneRemove,
-  mdiFileDelimitedOutline,
 } from "@mdi/js";
 import "./App.css";
 import type { DeviceInfo, RemediationScript, DeviceList, DeviceListFolder, Toast } from "./types";
-import { loadSavedLists, saveLists, loadSavedFolders, saveFolders, loadSavedScripts, saveScripts, loadCsvColumns, saveCsvColumns } from "./hooks/useLocalStorage";
-import { normalizeOs, isWindows, getOsIcon, extractOu, formatDate, parseIdentifiers, matchIdentifiers } from "./utils/device";
-import { extractIdentifierText, buildDeviceCsv, CSV_COLUMNS } from "./utils/csv";
+import { loadSavedLists, saveLists, loadSavedFolders, saveFolders, loadSavedScripts, saveScripts } from "./hooks/useLocalStorage";
+import { normalizeOs, isWindows, getOsIcon, extractOu, formatDate, matchIdentifiers } from "./utils/device";
+import type { ExportScope } from "./utils/exportPayload";
 import { useAppUpdate } from "./hooks/useAppUpdate";
 import DeviceItem from "./components/DeviceItem";
 import UpdateBanner from "./components/UpdateBanner";
 import AutopilotView from "./components/AutopilotView";
+import ImportModal, { type ImportPlan } from "./components/ImportModal";
+import ExportModal from "./components/ExportModal";
 
 
 function App() {
@@ -63,13 +62,10 @@ function App() {
   const [checkedDevices, setCheckedDevices] = useState<Set<string>>(new Set());
   const [showSettings, setShowSettings] = useState(false);
   const [wipeConfirm, setWipeConfirm] = useState<{ targets: DeviceInfo[]; input: string } | null>(null);
-  const [serialImport, setSerialImport] = useState<{
-    text: string;
-    listName: string;
-    targetListId: string | null;
-    unmatched: string[] | null;
-  } | null>(null);
-  const [csvExport, setCsvExport] = useState<{ targets: DeviceInfo[]; columns: string[] } | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [exportScope, setExportScope] = useState<ExportScope | null>(null);
+  /** List offered as an export scope — the right-clicked one, else the active one */
+  const [exportListId, setExportListId] = useState<string | null>(null);
   const [newScriptId, setNewScriptId] = useState("");
   const [newScriptName, setNewScriptName] = useState("");
   const [deviceLists, setDeviceLists] = useState<DeviceList[]>(loadSavedLists);
@@ -141,21 +137,23 @@ function App() {
     const hasMissing = deviceLists.some((l) => l.deviceIds.some((id) => id.startsWith("missing:")));
     if (!hasMissing) return;
 
-    const devicesByName = new Map(devices.map((d) => [d.deviceName.toLowerCase(), d]));
     let changed = false;
 
     const updated = deviceLists.map((list) => {
-      const newIds = list.deviceIds.map((id) => {
-        if (!id.startsWith("missing:")) return id;
-        const name = id.substring(8);
-        const dev = devicesByName.get(name.toLowerCase());
-        if (dev) {
-          changed = true;
-          return dev.id;
-        }
-        return id;
+      // flatMap, not map: a serial can belong to several managed devices after a
+      // re-enrolment, and matchIdentifiers returns every one of them
+      const seen = new Set<string>();
+      const newIds = list.deviceIds.flatMap((id) => {
+        if (!id.startsWith("missing:")) return [id];
+        const token = id.substring(8);
+        // Matches on device name first, then serial — the name-only lookup this
+        // replaced meant a serial-imported entry could never heal
+        const { matchedIds } = matchIdentifiers(devices, [token]);
+        if (matchedIds.length === 0) return [id];
+        changed = true;
+        return matchedIds;
       });
-      return { ...list, deviceIds: newIds };
+      return { ...list, deviceIds: newIds.filter((id) => !seen.has(id) && seen.add(id)) };
     });
 
     if (changed) {
@@ -380,267 +378,66 @@ function App() {
     saveLists(updated);
   };
 
-  const exportLists = async () => {
-    try {
-      const filePath = await save({
-        title: "Export Device Lists",
-        defaultPath: "intune-device-lists.json",
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!filePath) return;
+  // ── Import / export ──
 
-      const exportData = deviceLists.map((list) => ({
-        name: list.name,
-        devices: list.deviceIds.map((id) => {
-          const dev = devices.find((d) => d.id === id);
-          return { id, name: dev?.deviceName || "Unknown" };
-        }),
-      }));
-
-      await writeTextFile(filePath, JSON.stringify(exportData, null, 2));
-      showToast(`Exported ${deviceLists.length} list(s)`, "success");
-    } catch (e) {
-      showToast(`Export failed: ${e}`, "error");
-    }
-  };
-
-  const exportSingleList = async (listId: string) => {
-    const list = deviceLists.find((l) => l.id === listId);
-    if (!list) return;
-    try {
-      const filePath = await save({
-        title: `Export "${list.name}"`,
-        defaultPath: `${list.name.replace(/[^a-zA-Z0-9-_ ]/g, "")}.json`,
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!filePath) return;
-
-      const exportData = {
-        name: list.name,
-        devices: list.deviceIds.map((id) => {
-          const dev = devices.find((d) => d.id === id);
-          return { id, name: dev?.deviceName || "Unknown" };
-        }),
-      };
-
-      await writeTextFile(filePath, JSON.stringify(exportData, null, 2));
-      showToast(`Exported "${list.name}"`, "success");
-    } catch (e) {
-      showToast(`Export failed: ${e}`, "error");
-    }
-  };
-
-  // ── CSV export of selected devices ──
-
-  /** Open the column picker for the currently checked devices */
-  const openCsvExport = () => {
-    if (checkedList.length === 0) return;
-    // Rows go out in the same name order the device list shows, not Graph's order
-    const targets = [...checkedList].sort((a, b) =>
-      a.deviceName.localeCompare(b.deviceName, undefined, { sensitivity: "base" })
-    );
-    setCsvExport({ targets, columns: loadCsvColumns() });
-  };
-
-  const toggleCsvColumn = (key: string) => {
-    setCsvExport((prev) => prev && {
-      ...prev,
-      columns: prev.columns.includes(key)
-        ? prev.columns.filter((k) => k !== key)
-        : [...prev.columns, key],
-    });
-  };
-
-  const runCsvExport = async () => {
-    if (!csvExport || csvExport.columns.length === 0) return;
-    const { targets, columns } = csvExport;
-    try {
-      const stamp = new Date().toISOString().slice(0, 10);
-      const filePath = await save({
-        title: "Export Devices to CSV",
-        defaultPath: `intune-devices-${stamp}.csv`,
-        filters: [{ name: "CSV", extensions: ["csv"] }],
-      });
-      if (!filePath) return;
-
-      await writeTextFile(filePath, buildDeviceCsv(targets, columns));
-      saveCsvColumns(columns);
-      setCsvExport(null);
-      showToast(`Exported ${targets.length} device(s) to CSV`, "success");
-    } catch (e) {
-      showToast(`Export failed: ${e}`, "error");
-    }
-  };
-
-  const importLists = async () => {
-    try {
-      const filePath = await open({
-        title: "Import Device List",
-        filters: [
-          { name: "JSON", extensions: ["json"] },
-          { name: "Text (device names)", extensions: ["txt", "csv"] },
-        ],
-        multiple: false,
-      });
-      if (!filePath) return;
-
-      const contents = await readTextFile(filePath as string);
-      const ext = (filePath as string).split(".").pop()?.toLowerCase();
-
-      if (ext === "txt" || ext === "csv") {
-        // Plain text: device names or serial numbers, one per line or comma-separated
-        const tokens = parseIdentifiers(extractIdentifierText(contents));
-
-        if (tokens.length === 0) {
-          showToast("No device names or serial numbers found in file", "error");
-          return;
-        }
-
-        const { matchedIds, unmatched: unmatchedNames } = matchIdentifiers(devices, tokens);
-
-        // For unmatched entries, create stable IDs so they show as "not found"
-        const unmatchedIds = unmatchedNames.map((name) => `missing:${name}`);
-
-        const listName = (filePath as string).split("/").pop()?.replace(/\.(txt|csv)$/i, "") || "Imported";
-        const maxOrder = deviceLists.filter((l) => !l.folderId).reduce((m, l) => Math.max(m, l.order ?? 0), -1);
-        const newList: DeviceList = {
-          id: crypto.randomUUID(),
-          name: listName,
-          deviceIds: [...matchedIds, ...unmatchedIds],
-          folderId: null,
-          order: maxOrder + 1,
-        };
-
-        const updated = [...deviceLists, newList];
-        setDeviceLists(updated);
-        saveLists(updated);
-
-        const msg = unmatchedNames.length > 0
-          ? `Imported "${listName}": ${matchedIds.length} matched, ${unmatchedNames.length} not found`
-          : `Imported "${listName}": ${matchedIds.length} devices`;
-        showToast(msg, unmatchedNames.length > 0 ? "info" : "success");
-      } else {
-        // JSON format
-        const parsed = JSON.parse(contents);
-
-        // Support both single list object and array of lists
-        const items: Array<{ name: string; devices: Array<{ id: string; name?: string }> }> =
-          Array.isArray(parsed) ? parsed : [parsed];
-
-        if (items.length === 0 || !items[0].name || !items[0].devices) {
-          showToast("Invalid file format", "error");
-          return;
-        }
-
-        const baseOrder = deviceLists.filter((l) => !l.folderId).reduce((m, l) => Math.max(m, l.order ?? 0), -1) + 1;
-        const newLists: DeviceList[] = items.map((item, i) => ({
-          id: crypto.randomUUID(),
-          name: item.name,
-          deviceIds: item.devices.map((d) => d.id),
-          folderId: null,
-          order: baseOrder + i,
-        }));
-
-        const updated = [...deviceLists, ...newLists];
-        setDeviceLists(updated);
-        saveLists(updated);
-        showToast(`Imported ${newLists.length} list(s)`, "success");
-      }
-    } catch (e) {
-      showToast(`Import failed: ${e}`, "error");
-    }
-  };
-
-  // ── Import by serial number / device name ──
-
-  const openSerialImport = () => {
-    setSerialImport({ text: "", listName: "", targetListId: null, unmatched: null });
-  };
-
-  const serialImportMatches = useMemo(() => {
-    if (!serialImport) return { tokens: [], matchedIds: [], unmatched: [] };
-    const tokens = parseIdentifiers(serialImport.text);
-    return { tokens, ...matchIdentifiers(devices, tokens) };
-  }, [serialImport?.text, devices]);
-
-  const loadSerialImportFile = async () => {
-    if (!serialImport) return;
-    try {
-      const filePath = await open({
-        title: "Open serial number list",
-        filters: [{ name: "Text or CSV", extensions: ["txt", "csv"] }],
-        multiple: false,
-      });
-      if (!filePath) return;
-      const contents = await readTextFile(filePath as string);
-      const fileName = (filePath as string).split(/[/\\]/).pop()?.replace(/\.(txt|csv)$/i, "") || "";
-      setSerialImport((prev) => prev && {
-        ...prev,
-        text: extractIdentifierText(contents),
-        listName: prev.listName || fileName,
-        unmatched: null,
-      });
-    } catch (e) {
-      showToast(`Could not read file: ${e}`, "error");
-    }
-  };
-
-  const runSerialImport = () => {
-    if (!serialImport) return;
-    const { tokens, matchedIds, unmatched } = serialImportMatches;
-    if (tokens.length === 0) return;
-
-    // Unmatched entries keep the "missing:" convention so they render as [Not found] rows
-    const importedIds = [...matchedIds, ...unmatched.map((t) => `missing:${t}`)];
+  /** Apply what the import dialog resolved. All list mutation lives here, not in the modal. */
+  const commitImport = (plan: ImportPlan, matched: number, unresolved: string[]) => {
+    const baseOrder =
+      deviceLists.filter((l) => !l.folderId).reduce((m, l) => Math.max(m, l.order ?? 0), -1) + 1;
 
     let updated: DeviceList[];
-    let listLabel: string;
+    let label: string;
 
-    if (serialImport.targetListId) {
-      const target = deviceLists.find((l) => l.id === serialImport.targetListId);
-      if (!target) { showToast("That list no longer exists", "error"); return; }
-      listLabel = target.name;
+    if (plan.kind === "restoreLists") {
+      const restored: DeviceList[] = plan.lists.map((l, i) => ({
+        id: crypto.randomUUID(),
+        name: l.name,
+        deviceIds: l.deviceIds,
+        folderId: null,
+        order: baseOrder + i,
+        color: l.color ?? null,
+      }));
+      updated = [...deviceLists, ...restored];
+      label = `${restored.length} list${restored.length === 1 ? "" : "s"}`;
+    } else if (plan.kind === "existingList") {
+      const target = deviceLists.find((l) => l.id === plan.listId);
+      if (!target) {
+        showToast("That list no longer exists", "error");
+        return;
+      }
+      label = `"${target.name}"`;
       updated = deviceLists.map((l) =>
-        l.id === target.id ? { ...l, deviceIds: [...new Set([...l.deviceIds, ...importedIds])] } : l
+        l.id === target.id
+          ? { ...l, deviceIds: [...new Set([...l.deviceIds, ...plan.deviceIds])] }
+          : l
       );
     } else {
-      const name = serialImport.listName.trim();
-      if (!name) { showToast("List name is required", "error"); return; }
-      listLabel = name;
-      const maxOrder = deviceLists.filter((l) => !l.folderId).reduce((m, l) => Math.max(m, l.order ?? 0), -1);
-      updated = [...deviceLists, {
-        id: crypto.randomUUID(),
-        name,
-        deviceIds: importedIds,
-        folderId: null,
-        order: maxOrder + 1,
-      }];
+      label = `"${plan.name}"`;
+      updated = [
+        ...deviceLists,
+        {
+          id: crypto.randomUUID(),
+          name: plan.name,
+          deviceIds: plan.deviceIds,
+          folderId: null,
+          order: baseOrder,
+        },
+      ];
     }
 
     setDeviceLists(updated);
     saveLists(updated);
 
-    const msg = unmatched.length > 0
-      ? `"${listLabel}": ${matchedIds.length} matched, ${unmatched.length} not found`
-      : `"${listLabel}": ${matchedIds.length} device(s) imported`;
-    showToast(msg, unmatched.length > 0 ? "info" : "success");
-
-    if (unmatched.length > 0) {
-      // Keep the modal open so the unmatched tags can be reviewed and copied
-      setSerialImport((prev) => prev && { ...prev, unmatched });
-    } else {
-      setSerialImport(null);
-    }
+    const msg =
+      unresolved.length > 0
+        ? `${label}: ${matched} matched, ${unresolved.length} not found`
+        : `${label}: ${matched} device${matched === 1 ? "" : "s"} imported`;
+    showToast(msg, unresolved.length > 0 ? "info" : "success");
   };
 
-  const copyUnmatched = async () => {
-    if (!serialImport?.unmatched) return;
-    try {
-      await navigator.clipboard.writeText(serialImport.unmatched.join("\n"));
-      showToast("Copied to clipboard", "success");
-    } catch {
-      showToast("Could not copy to clipboard", "error");
-    }
+  const openExport = (scope: ExportScope, listId: string | null) => {
+    setExportListId(listId);
+    setExportScope(scope);
   };
 
   // ── Folder management ──
@@ -753,11 +550,19 @@ function App() {
     });
   };
 
+  /** Previous count, so a deviceLists change is not mistaken for deselecting every list */
+  const prevCheckedListCount = useRef(0);
+
   // When lists are checked/unchecked, sync device selection to match
   useEffect(() => {
+    const previous = prevCheckedListCount.current;
+    prevCheckedListCount.current = checkedLists.size;
+
     if (checkedLists.size === 0) {
-      // All lists deselected — clear device selection too
-      setCheckedDevices(new Set());
+      // Only clear when list selection was genuinely given up. deviceLists is a
+      // dependency, so without this guard every list mutation — create, rename,
+      // recolour, reorder, import — silently wiped the device selection.
+      if (previous > 0) setCheckedDevices(new Set());
       return;
     }
     const allIds = new Set<string>();
@@ -929,6 +734,7 @@ function App() {
     [devices, checkedDevices]
   );
 
+
   const checkedWindowsDevices = useMemo(
     () => checkedList.filter((d) => isWindows(d)),
     [checkedList]
@@ -1098,6 +904,18 @@ function App() {
       a.deviceName.localeCompare(b.deviceName, undefined, { sensitivity: "base" })
     );
   }, [filteredDevices]);
+
+  /** Everything the export dialog needs to resolve a scope. The visible set drops the
+   *  [Not found] placeholders, which carry no real device data. */
+  const exportContext = useMemo(
+    () => ({
+      selected: checkedList,
+      visible: sortedDevices.filter((d) => !d.deviceName.startsWith("[Not found]")),
+      allDevices: devices,
+      lists: deviceLists,
+    }),
+    [checkedList, sortedDevices, devices, deviceLists]
+  );
 
   const groupedDevices = useMemo(() => {
     const groups = new Map<string, DeviceInfo[]>();
@@ -1421,11 +1239,11 @@ function App() {
             <div className="bulk-divider" />
             <button
               className="bulk-btn"
-              onClick={openCsvExport}
+              onClick={() => openExport({ kind: "selected" }, activeList)}
               disabled={checkedList.length === 0}
             >
-              <Icon path={mdiFileDelimitedOutline} size={0.65} />
-              <span>Export CSV</span>
+              <Icon path={mdiExport} size={0.65} />
+              <span>Export…</span>
             </button>
             <div className="bulk-divider" />
             <button
@@ -1516,27 +1334,27 @@ function App() {
                 </button>
                 <button
                   className="lists-header-btn"
-                  onClick={importLists}
-                  title="Import lists"
+                  onClick={() => setImportOpen(true)}
+                  title="Import devices by name, serial number, or file"
                 >
                   <Icon path={mdiImport} size={0.55} />
                 </button>
                 <button
                   className="lists-header-btn"
-                  onClick={openSerialImport}
-                  title="Import list by serial number / device name"
+                  onClick={() =>
+                    openExport(
+                      deviceLists.length > 0
+                        ? { kind: "allLists" }
+                        : checkedList.length > 0
+                          ? { kind: "selected" }
+                          : { kind: "visible" },
+                      activeList
+                    )
+                  }
+                  title="Export devices or lists"
                 >
-                  <Icon path={mdiBarcodeScan} size={0.55} />
+                  <Icon path={mdiExport} size={0.55} />
                 </button>
-                {deviceLists.length > 0 && (
-                  <button
-                    className="lists-header-btn"
-                    onClick={exportLists}
-                    title="Export lists"
-                  >
-                    <Icon path={mdiExport} size={0.55} />
-                  </button>
-                )}
                 {checkedLists.size > 0 && (
                   <button
                     className="lists-header-btn"
@@ -1809,178 +1627,26 @@ function App() {
       </div>
       )}
 
-      {/* Import list by serial number / device name */}
-      {serialImport && (
-        <div className="modal-overlay" onClick={() => setSerialImport(null)}>
-          <div className="modal serial-import-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Import by Serial Number</h3>
-            <p className="serial-import-hint">
-              Paste service tags or device names — one per line, or separated by commas.
-              Serial numbers are matched against the devices loaded from Intune.
-            </p>
-
-            <textarea
-              className="serial-import-textarea"
-              value={serialImport.text}
-              onChange={(e) =>
-                setSerialImport({ ...serialImport, text: e.target.value, unmatched: null })
-              }
-              placeholder={"7XKQ2H3\n9PLM4K2\n..."}
-              spellCheck={false}
-              autoFocus
-            />
-
-            <div className="serial-import-status">
-              <button className="btn-link" onClick={loadSerialImportFile}>
-                <Icon path={mdiImport} size={0.6} />
-                Open file…
-              </button>
-              <span className="serial-import-counts">
-                {serialImportMatches.tokens.length} entered ·{" "}
-                <strong>{serialImportMatches.matchedIds.length}</strong> matched ·{" "}
-                {serialImportMatches.unmatched.length} not found
-              </span>
-            </div>
-
-            <div className="serial-import-dest">
-              <label className="serial-import-radio">
-                <input
-                  type="radio"
-                  checked={serialImport.targetListId === null}
-                  onChange={() => setSerialImport({ ...serialImport, targetListId: null })}
-                />
-                New list
-              </label>
-              {serialImport.targetListId === null && (
-                <input
-                  className="serial-import-name"
-                  type="text"
-                  value={serialImport.listName}
-                  onChange={(e) => setSerialImport({ ...serialImport, listName: e.target.value })}
-                  placeholder="List name"
-                />
-              )}
-              {deviceLists.length > 0 && (
-                <>
-                  <label className="serial-import-radio">
-                    <input
-                      type="radio"
-                      checked={serialImport.targetListId !== null}
-                      onChange={() =>
-                        setSerialImport({ ...serialImport, targetListId: deviceLists[0].id })
-                      }
-                    />
-                    Add to existing
-                  </label>
-                  {serialImport.targetListId !== null && (
-                    <select
-                      className="serial-import-select"
-                      value={serialImport.targetListId}
-                      onChange={(e) =>
-                        setSerialImport({ ...serialImport, targetListId: e.target.value })
-                      }
-                    >
-                      {deviceLists.map((l) => (
-                        <option key={l.id} value={l.id}>{l.name}</option>
-                      ))}
-                    </select>
-                  )}
-                </>
-              )}
-            </div>
-
-            {serialImport.unmatched && serialImport.unmatched.length > 0 && (
-              <div className="serial-import-unmatched">
-                <div className="serial-import-unmatched-head">
-                  <span>Not found in Intune ({serialImport.unmatched.length})</span>
-                  <button className="btn-link" onClick={copyUnmatched}>Copy</button>
-                </div>
-                <div className="serial-import-unmatched-list">
-                  {serialImport.unmatched.map((tag) => (
-                    <div key={tag} className="serial-import-unmatched-item">{tag}</div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="modal-actions">
-              <button className="btn-secondary" onClick={() => setSerialImport(null)}>
-                {serialImport.unmatched ? "Close" : "Cancel"}
-              </button>
-              <button
-                className="btn-primary"
-                disabled={serialImportMatches.tokens.length === 0}
-                onClick={runSerialImport}
-              >
-                Import {serialImportMatches.tokens.length || ""}
-              </button>
-            </div>
-          </div>
-        </div>
+      {importOpen && (
+        <ImportModal
+          devices={devices}
+          lists={deviceLists}
+          onCommit={commitImport}
+          onClose={() => setImportOpen(false)}
+          showToast={showToast}
+        />
       )}
 
-      {/* CSV export column picker */}
-      {csvExport && (
-        <div className="modal-overlay" onClick={() => setCsvExport(null)}>
-          <div className="modal csv-export-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Export {csvExport.targets.length} Device{csvExport.targets.length === 1 ? "" : "s"} to CSV</h3>
-            <p className="csv-export-hint">
-              Pick the details to include. Columns are written in the order shown, and your
-              selection is remembered for next time.
-            </p>
-
-            <div className="csv-export-toolbar">
-              <button
-                className="btn-link"
-                onClick={() => setCsvExport({ ...csvExport, columns: CSV_COLUMNS.map((c) => c.key) })}
-              >
-                Select all
-              </button>
-              <button
-                className="btn-link"
-                onClick={() => setCsvExport({ ...csvExport, columns: [] })}
-              >
-                Clear
-              </button>
-              <span className="csv-export-counts">
-                {csvExport.columns.length} of {CSV_COLUMNS.length} columns
-              </span>
-            </div>
-
-            <div className="csv-export-columns">
-              {CSV_COLUMNS.map((col) => {
-                const checked = csvExport.columns.includes(col.key);
-                return (
-                  <label key={col.key} className="csv-export-column">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleCsvColumn(col.key)}
-                    />
-                    <span className="csv-export-column-label">{col.label}</span>
-                    <span className="csv-export-column-sample">
-                      {csvExport.targets[0] ? col.value(csvExport.targets[0]) : ""}
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-
-            <div className="modal-actions">
-              <button className="btn-secondary" onClick={() => setCsvExport(null)}>
-                Cancel
-              </button>
-              <button
-                className="btn-primary"
-                disabled={csvExport.columns.length === 0}
-                onClick={runCsvExport}
-              >
-                Export CSV
-              </button>
-            </div>
-          </div>
-        </div>
+      {exportScope && (
+        <ExportModal
+          initialScope={exportScope}
+          ctx={exportContext}
+          listScopeId={exportListId}
+          onClose={() => setExportScope(null)}
+          showToast={showToast}
+        />
       )}
+
 
       {/* Typed confirmation modal for wipe */}
       {wipeConfirm && (
@@ -2237,10 +1903,13 @@ function App() {
             </button>
             <button
               className="context-menu-item"
-              onClick={() => { exportSingleList(listContextMenu.listId); setListContextMenu(null); }}
+              onClick={() => {
+                openExport({ kind: "list", listId: listContextMenu.listId }, listContextMenu.listId);
+                setListContextMenu(null);
+              }}
             >
               <Icon path={mdiExport} size={0.6} />
-              Export list
+              Export…
             </button>
             <div className="context-menu-separator" />
             <div className="context-menu-label">Color</div>

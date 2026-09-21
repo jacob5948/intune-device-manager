@@ -1,10 +1,14 @@
 import type { RemediationScript, DeviceList, DeviceListFolder } from "../types";
 import { CSV_COLUMNS, DEFAULT_CSV_COLUMN_KEYS } from "../utils/csv";
+import type { IdentifierField } from "../utils/device";
+import type { ExportFormat } from "../utils/exportPayload";
 
 const SCRIPTS_KEY = "remediationScripts";
 const LISTS_KEY = "deviceLists";
 const FOLDERS_KEY = "deviceListFolders";
 const CSV_COLUMNS_KEY = "csvExportColumns";
+const IDENTIFIER_FIELD_KEY = "exportIdentifierField";
+const EXPORT_FORMAT_KEY = "exportFormat";
 
 export const loadSavedLists = (): DeviceList[] => {
   try {
@@ -83,4 +87,24 @@ export const loadCsvColumns = (): string[] => {
 
 export const saveCsvColumns = (keys: string[]) => {
   localStorage.setItem(CSV_COLUMNS_KEY, JSON.stringify(keys));
+};
+
+/** Which field the last plain-list export used */
+export const loadIdentifierField = (): IdentifierField => {
+  const raw = localStorage.getItem(IDENTIFIER_FIELD_KEY);
+  return raw === "serialNumber" || raw === "deviceName" ? raw : "serialNumber";
+};
+
+export const saveIdentifierField = (field: IdentifierField) => {
+  localStorage.setItem(IDENTIFIER_FIELD_KEY, field);
+};
+
+/** Format the export dialog last used, so the common case is one click */
+export const loadExportFormat = (): ExportFormat => {
+  const raw = localStorage.getItem(EXPORT_FORMAT_KEY);
+  return raw === "csv" || raw === "plain" || raw === "lists" ? raw : "csv";
+};
+
+export const saveExportFormat = (format: ExportFormat) => {
+  localStorage.setItem(EXPORT_FORMAT_KEY, format);
 };

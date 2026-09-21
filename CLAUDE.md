@@ -12,7 +12,7 @@ Tauri v2 desktop app for Microsoft Intune device management via MS Graph API.
 - `src/` — React frontend
   - `src/App.tsx` — Main application component
   - `src/App.css` — All styles (dark mode via prefers-color-scheme)
-  - `src/components/` — React components (DeviceItem)
+  - `src/components/` — React components (DeviceItem, ImportModal, ExportModal, AutopilotView, UpdateBanner)
   - `src/hooks/` — localStorage helpers
   - `src/types/` — Shared TypeScript interfaces
   - `src/utils/` — Pure utility functions
@@ -34,7 +34,14 @@ npm run tauri build   # production
 - Device IDs are validated server-side before use in API URLs
 - Custom device lists and folders stored in localStorage
 - In-app updates use `tauri-plugin-updater` against `latest.json` on the newest published GitHub release; `src/hooks/useAppUpdate.ts` owns the state machine and `UpdateBanner` the UI
+- All import and export goes through two dialogs — `src/components/ImportModal.tsx` and `src/components/ExportModal.tsx`. Add a new entry point by opening one of those with a pre-set scope, never by writing another bespoke handler
+- The format helpers are pure and live in `src/utils/`: `importSource.ts` (decides what pasted or file text *is*, by content — never by file extension), `listFile.ts` (saved-list JSON, both directions), `exportPayload.ts` (scope + format → the exact bytes, filename and caveat), plus `csv.ts` and `device.ts`. Being pure, they can be exercised with a throwaway esbuild + node harness, which is the only testing this repo has
 - CSV export columns are defined once in `src/utils/csv.ts` (`CSV_COLUMNS`); add a column there and it appears in the picker. The last selection is remembered in localStorage
+- Saved-list files are a **bare JSON array** with `version: 2` on each list, not a `{version, lists}` envelope — so a file written today still imports into an older installed build. v2 entries resolve by device name, then serial, then the stored id; v1 (un-versioned) files stay **id-first**, because they always wrote a `name` — often the literal "Unknown" — and matching on it first would silently change how existing files import
+- A list entry that matched nothing is stored as `missing:<token>` and renders as a `[Not found]` row. It is re-resolved through `matchIdentifiers` whenever devices refresh, so it heals by name *or* serial. Keep the 8-character `substring(8)` offset in step with the prefix
+- Writing files is limited by the Tauri fs scope to `$DOCUMENT`, `$DOWNLOAD` and `$DESKTOP`; the export dialog defaults into Downloads and offers Copy as the way out
+- Clipboard writes go through `src/utils/clipboard.ts`, which uses `tauri-plugin-clipboard-manager` and falls back to `navigator.clipboard`. Do not call `navigator.clipboard` directly — a macOS release build serves the webview from `tauri://localhost`, where it is not dependably available, so a browser-only call works in `tauri dev` and fails for real users
+- Autopilot hardware-hash import (`AutopilotView.tsx`) is deliberately separate: it POSTs hashes to Graph to create Autopilot records, and shares nothing with device import
 - Client secrets stored in OS keychain (macOS Keychain / Windows Credential Manager)
 - Groups collapsed by default, bulk actions require double confirmation for >100 devices
 - Bulk destructive actions (e.g. delete) must require the user to type a confirmation phrase: "I really want to delete <n> devices" where <n> is the number of selected devices. Use a modal with a text input, not a native confirm dialog. The delete button must stay disabled until the phrase matches exactly. Apply this pattern to any new bulk destructive action.

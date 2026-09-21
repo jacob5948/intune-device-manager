@@ -12,6 +12,7 @@
     "fs:default",
     "updater:default",
     "process:allow-restart",
+    "clipboard-manager:allow-write-text",
     {
       "identifier": "fs:allow-write-text-file",
       "allow": [
