@@ -282,6 +282,7 @@ button {
 
 /* Bulk action bar */
 .bulk-bar {
+  container-type: inline-size;
   display: flex;
   align-items: center;
   gap: 0;
@@ -342,7 +343,7 @@ button {
 .bulk-actions-group {
   display: flex;
   flex: 1;
-  flex-wrap: wrap;
+  min-width: 0;
   align-items: center;
   gap: 0;
 }
@@ -388,7 +389,15 @@ button {
   background: none;
 }
 
+/* Not enough room for every label: keep one row, and Wipe stays spelled out */
+@container (max-width: 720px) {
+  .bulk-actions-group .bulk-btn span {
+    display: none;
+  }
+}
+
 .bulk-btn-danger {
+  flex-shrink: 0;
   margin-left: auto;
   background: #d70015;
 }

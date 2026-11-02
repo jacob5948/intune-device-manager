@@ -1647,6 +1647,8 @@ function App() {
               <div className="bulk-actions-group">
                 <button
                   className="bulk-btn"
+                  title="Sync"
+                  aria-label="Sync"
                   onClick={handleBulkSync}
                   disabled={checkedWindowsDevices.length === 0}
                 >
@@ -1656,6 +1658,8 @@ function App() {
                 <div className="bulk-divider" />
                 <button
                   className="bulk-btn"
+                  title="Restart"
+                  aria-label="Restart"
                   onClick={handleBulkRestart}
                   disabled={checkedWindowsDevices.length === 0}
                 >
@@ -1665,6 +1669,8 @@ function App() {
                 <div className="bulk-divider" />
                 <button
                   className="bulk-btn"
+                  title="Run remediation"
+                  aria-label="Run remediation"
                   onClick={handleBulkRemediation}
                   disabled={checkedWindowsDevices.length === 0}
                 >
@@ -1674,6 +1680,8 @@ function App() {
                 <div className="bulk-divider" />
                 <button
                   className="bulk-btn"
+                  title="Export"
+                  aria-label="Export"
                   onClick={() => openExport({ kind: "selected" }, singleSelectedList)}
                   disabled={checkedList.length === 0}
                 >
@@ -1684,6 +1692,8 @@ function App() {
                 {selectedListObjs.length > 0 ? (
                   <button
                     className="bulk-btn"
+                    title={selectedListObjs.length === 1 ? "Remove from list" : "Remove from selected lists"}
+                    aria-label={selectedListObjs.length === 1 ? "Remove from list" : "Remove from selected lists"}
                     onClick={() => {
                       removeDevicesFromLists(selectedListObjs.map((l) => l.id), checkedDevices);
                       showToast(
@@ -1696,12 +1706,14 @@ function App() {
                     }}
                   >
                     <Icon path={mdiPlaylistRemove} size={0.65} />
-                    <span>{selectedListObjs.length === 1 ? "Remove from list" : "Remove from lists"}</span>
+                    <span>Remove</span>
                   </button>
                 ) : (
                   <div className="bulk-list-dropdown">
                     <button
                       className="bulk-btn"
+                      title="Add to list"
+                      aria-label="Add to list"
                       onClick={() => setShowNewList(!showNewList)}
                     >
                       <Icon path={mdiPlaylistPlus} size={0.65} />
@@ -1735,15 +1747,16 @@ function App() {
                     )}
                   </div>
                 )}
-                <button
-                  className="bulk-btn bulk-btn-danger"
-                  onClick={handleBulkWipe}
-                  disabled={checkedWindowsDevices.length === 0}
-                >
-                  <Icon path={mdiCellphoneRemove} size={0.65} />
-                  <span>Wipe</span>
-                </button>
               </div>
+              {/* Outside the group, so it holds the end of the bar whatever the other labels do */}
+              <button
+                className="bulk-btn bulk-btn-danger"
+                onClick={handleBulkWipe}
+                disabled={checkedWindowsDevices.length === 0}
+              >
+                <Icon path={mdiCellphoneRemove} size={0.65} />
+                <span>Wipe</span>
+              </button>
             </div>
           )}
           {selectedDevice ? (
