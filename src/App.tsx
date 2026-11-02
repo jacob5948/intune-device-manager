@@ -42,6 +42,12 @@ import Modal from "./components/Modal";
 import { activateOnKey } from "./utils/keyboard";
 
 
+interface BulkTargets {
+  name: string | undefined;
+  kind: "list" | "folder";
+  devices: DeviceInfo[];
+}
+
 type ListDropTarget =
   | { type: "row"; id: string; after: boolean }
   | { type: "folder"; id: string }
@@ -77,6 +83,7 @@ function App() {
   const [showNewList, setShowNewList] = useState(false);
   const [newListName, setNewListName] = useState("");
   const [listContextMenu, setListContextMenu] = useState<{ listId: string; x: number; y: number } | null>(null);
+  const [folderContextMenu, setFolderContextMenu] = useState<{ folderId: string; x: number; y: number } | null>(null);
   const [renamingList, setRenamingList] = useState<{ id: string; name: string } | null>(null);
   const [listFolders, setListFolders] = useState<DeviceListFolder[]>(loadSavedFolders);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
@@ -757,11 +764,33 @@ function App() {
     return devices.filter((d) => idSet.has(d.id) && isWindows(d));
   };
 
-  const handleListSync = async (listId: string) => {
-    const targets = getListWindowsDevices(listId);
-    const list = deviceLists.find((l) => l.id === listId);
-    if (targets.length === 0) { showToast("No Windows devices in this list", "error"); return; }
-    if (!(await confirm(`Sync ${targets.length} Windows device(s) in "${list?.name}"?`))) return;
+  /** The Windows devices a right-clicked list or folder acts on, named for its prompts */
+  const listTargets = (listId: string): BulkTargets => ({
+    name: deviceLists.find((l) => l.id === listId)?.name,
+    kind: "list",
+    devices: getListWindowsDevices(listId),
+  });
+
+  const folderTargets = (folderId: string): BulkTargets => {
+    // A device in several of the folder's lists is still one target
+    const ids = new Set(listsInFolder(folderId).flatMap((l) => l.deviceIds));
+    return {
+      name: listFolders.find((f) => f.id === folderId)?.name,
+      kind: "folder",
+      devices: devices.filter((d) => ids.has(d.id) && isWindows(d)),
+    };
+  };
+
+  const noWindowsDevices = ({ kind, devices: targets }: BulkTargets) => {
+    if (targets.length > 0) return false;
+    showToast(`No Windows devices in this ${kind}`, "error");
+    return true;
+  };
+
+  const handleTargetsSync = async (group: BulkTargets) => {
+    if (noWindowsDevices(group)) return;
+    const targets = group.devices;
+    if (!(await confirm(`Sync ${targets.length} Windows device(s) in "${group.name}"?`))) return;
     if (!(await confirmLargeBatch(targets.length, "sync"))) return;
     let ok = 0, fail = 0;
     for (let i = 0; i < targets.length; i++) {
@@ -774,11 +803,10 @@ function App() {
     showToast(`Sync: ${ok} succeeded, ${fail} failed`, ok > 0 ? "success" : "error");
   };
 
-  const handleListRestart = async (listId: string) => {
-    const targets = getListWindowsDevices(listId);
-    const list = deviceLists.find((l) => l.id === listId);
-    if (targets.length === 0) { showToast("No Windows devices in this list", "error"); return; }
-    if (!(await confirm(`Restart ${targets.length} Windows device(s) in "${list?.name}"? This cannot be undone.`))) return;
+  const handleTargetsRestart = async (group: BulkTargets) => {
+    if (noWindowsDevices(group)) return;
+    const targets = group.devices;
+    if (!(await confirm(`Restart ${targets.length} Windows device(s) in "${group.name}"? This cannot be undone.`))) return;
     if (!(await confirmLargeBatch(targets.length, "restart"))) return;
     let ok = 0, fail = 0;
     for (let i = 0; i < targets.length; i++) {
@@ -791,17 +819,15 @@ function App() {
     showToast(`Restart: ${ok} succeeded, ${fail} failed`, ok > 0 ? "success" : "error");
   };
 
-  const handleListWipe = (listId: string) => {
-    const targets = getListWindowsDevices(listId);
-    if (targets.length === 0) { showToast("No Windows devices in this list", "error"); return; }
-    promptWipe(targets);
+  const handleTargetsWipe = (group: BulkTargets) => {
+    if (noWindowsDevices(group)) return;
+    promptWipe(group.devices);
   };
 
-  const handleListRemediation = (listId: string) => {
-    const targets = getListWindowsDevices(listId);
-    if (targets.length === 0) { showToast("No Windows devices in this list", "error"); return; }
-    // Select all windows devices in the list, then open remediation
-    setCheckedDevices(new Set(targets.map((d) => d.id)));
+  const handleTargetsRemediation = (group: BulkTargets) => {
+    if (noWindowsDevices(group)) return;
+    // Check all its Windows devices, then open remediation
+    setCheckedDevices(new Set(group.devices.map((d) => d.id)));
     openRemediationModal();
   };
 
@@ -1433,6 +1459,10 @@ function App() {
                       onMoveKey(e, (step) => moveFolderByKey(folder.id, step));
                     }}
                     onPointerDown={(e) => startListDrag(e, "folder", folder.id)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setFolderContextMenu({ folderId: folder.id, x: e.clientX, y: e.clientY });
+                    }}
                   >
                     <button
                       className="folder-chevron"
@@ -2070,6 +2100,88 @@ function App() {
       )}
 
       {/* List context menu */}
+      {folderContextMenu && (() => {
+        const { folderId } = folderContextMenu;
+        const close = () => setFolderContextMenu(null);
+        const folder = listFolders.find((f) => f.id === folderId);
+        return (
+          <div
+            className="context-menu-overlay"
+            onClick={close}
+            onContextMenu={(e) => { e.preventDefault(); close(); }}
+          >
+            <div
+              className="context-menu"
+              style={{ top: folderContextMenu.y, left: folderContextMenu.x }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                className="context-menu-item"
+                onClick={() => { handleTargetsSync(folderTargets(folderId)); close(); }}
+              >
+                <Icon path={mdiSync} size={0.6} />
+                Sync all Windows devices
+              </button>
+              <button
+                className="context-menu-item"
+                onClick={() => { handleTargetsRestart(folderTargets(folderId)); close(); }}
+              >
+                <Icon path={mdiRestart} size={0.6} />
+                Restart all Windows devices
+              </button>
+              <button
+                className="context-menu-item"
+                onClick={() => { handleTargetsRemediation(folderTargets(folderId)); close(); }}
+              >
+                <Icon path={mdiScriptTextPlay} size={0.6} />
+                Run remediation
+              </button>
+              <button
+                className="context-menu-item context-menu-danger"
+                onClick={() => { handleTargetsWipe(folderTargets(folderId)); close(); }}
+              >
+                <Icon path={mdiCellphoneRemove} size={0.6} />
+                Wipe all Windows devices
+              </button>
+              <div className="context-menu-separator" />
+              <button
+                className="context-menu-item"
+                onClick={() => {
+                  if (folder) setRenamingFolder({ id: folder.id, name: folder.name });
+                  close();
+                }}
+              >
+                <Icon path={mdiPencil} size={0.6} />
+                Rename
+              </button>
+              <button
+                className="context-menu-item"
+                onClick={() => {
+                  if (folder) {
+                    openExport(
+                      { kind: "folder", name: folder.name, listIds: listsInFolder(folderId).map((l) => l.id) },
+                      null
+                    );
+                  }
+                  close();
+                }}
+              >
+                <Icon path={mdiExport} size={0.6} />
+                Export…
+              </button>
+              <div className="context-menu-separator" />
+              <button
+                className="context-menu-item context-menu-danger"
+                onClick={() => { deleteFolder(folderId); close(); }}
+              >
+                <Icon path={mdiDelete} size={0.6} />
+                Delete folder
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       {listContextMenu && (
         <div
           className="context-menu-overlay"
@@ -2083,28 +2195,28 @@ function App() {
           >
             <button
               className="context-menu-item"
-              onClick={() => { handleListSync(listContextMenu.listId); setListContextMenu(null); }}
+              onClick={() => { handleTargetsSync(listTargets(listContextMenu.listId)); setListContextMenu(null); }}
             >
               <Icon path={mdiSync} size={0.6} />
               Sync all Windows devices
             </button>
             <button
               className="context-menu-item"
-              onClick={() => { handleListRestart(listContextMenu.listId); setListContextMenu(null); }}
+              onClick={() => { handleTargetsRestart(listTargets(listContextMenu.listId)); setListContextMenu(null); }}
             >
               <Icon path={mdiRestart} size={0.6} />
               Restart all Windows devices
             </button>
             <button
               className="context-menu-item"
-              onClick={() => { handleListRemediation(listContextMenu.listId); setListContextMenu(null); }}
+              onClick={() => { handleTargetsRemediation(listTargets(listContextMenu.listId)); setListContextMenu(null); }}
             >
               <Icon path={mdiScriptTextPlay} size={0.6} />
               Run remediation
             </button>
             <button
               className="context-menu-item context-menu-danger"
-              onClick={() => { handleListWipe(listContextMenu.listId); setListContextMenu(null); }}
+              onClick={() => { handleTargetsWipe(listTargets(listContextMenu.listId)); setListContextMenu(null); }}
             >
               <Icon path={mdiCellphoneRemove} size={0.6} />
               Wipe all Windows devices

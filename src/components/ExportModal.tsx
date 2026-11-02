@@ -93,6 +93,13 @@ const ExportModal = ({ initialScope, ctx, listScopeId, onClose, showToast }: Exp
         disabled: list.deviceIds.length === 0,
       });
     }
+    if (initialScope.kind === "folder") {
+      options.push({
+        scope: initialScope,
+        label: `Folder "${initialScope.name}"`,
+        disabled: initialScope.listIds.length === 0,
+      });
+    }
     options.push({
       scope: { kind: "visible" },
       label: `All visible (${ctx.visible.length})`,
@@ -106,7 +113,7 @@ const ExportModal = ({ initialScope, ctx, listScopeId, onClose, showToast }: Exp
       });
     }
     return options;
-  }, [ctx, listScopeId]);
+  }, [ctx, listScopeId, initialScope]);
 
   /** Changing scope can invalidate the format — snap it rather than leaving a dead combo */
   const changeScope = (next: ExportScope) => {

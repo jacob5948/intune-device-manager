@@ -9,6 +9,7 @@ export type ExportScope =
   | { kind: "selected" }
   | { kind: "visible" }
   | { kind: "list"; listId: string }
+  | { kind: "folder"; name: string; listIds: string[] }
   | { kind: "allLists" };
 
 export type ExportScopeKind = ExportScope["kind"];
@@ -25,6 +26,7 @@ export const FORMATS_FOR_SCOPE: Record<ExportScopeKind, ExportFormat[]> = {
   selected: ["csv", "plain", "lists"],
   visible: ["csv", "plain", "lists"],
   list: ["csv", "plain", "lists"],
+  folder: ["csv", "plain", "lists"],
   allLists: ["lists"],
 };
 
@@ -110,13 +112,15 @@ export const resolveExportScope = (scope: ExportScope, ctx: ScopeContext): Resol
     };
   }
 
-  // allLists
+  // A folder's lists, or every list
+  const scopeLists =
+    scope.kind === "folder" ? ctx.lists.filter((l) => scope.listIds.includes(l.id)) : ctx.lists;
   const byId = new Map(ctx.allDevices.map((d) => [d.id, d]));
   const seen = new Set<string>();
   const devices: DeviceInfo[] = [];
   const unresolvedTokens: string[] = [];
   const danglingIds: string[] = [];
-  for (const list of ctx.lists) {
+  for (const list of scopeLists) {
     for (const id of list.deviceIds) {
       if (id.startsWith(MISSING_PREFIX)) {
         unresolvedTokens.push(id.substring(MISSING_PREFIX.length));
@@ -132,11 +136,14 @@ export const resolveExportScope = (scope: ExportScope, ctx: ScopeContext): Resol
   devices.sort(byName);
   return {
     devices,
-    lists: ctx.lists.map((l) => ({ name: l.name, color: l.color ?? null, deviceIds: l.deviceIds })),
+    lists: scopeLists.map((l) => ({ name: l.name, color: l.color ?? null, deviceIds: l.deviceIds })),
     unresolvedTokens,
     danglingIds,
-    label: `All saved lists (${ctx.lists.length})`,
-    defaultListName: "Device lists",
+    label:
+      scope.kind === "folder"
+        ? `Folder "${scope.name}" (${devices.length})`
+        : `All saved lists (${ctx.lists.length})`,
+    defaultListName: scope.kind === "folder" ? scope.name : "Device lists",
   };
 };
 
