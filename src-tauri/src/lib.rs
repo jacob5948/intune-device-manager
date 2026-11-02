@@ -2,7 +2,7 @@ mod graph;
 
 use graph::{acquire_token, AppError, AppState, AutopilotDevice, AutopilotImportEntry, AutopilotImportResult, CachedToken, Credentials, DeviceInfo, GraphClient};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 const KEYRING_SERVICE: &str = "com.jacob.intune-device-manager";
 
@@ -35,7 +35,7 @@ async fn login(
     });
     s.token = Some(CachedToken {
         access_token: token,
-        expires_at: Instant::now() + Duration::from_secs(expires_in),
+        expires_at: SystemTime::now() + Duration::from_secs(expires_in),
     });
 
     Ok(())
@@ -81,7 +81,7 @@ async fn get_client_and_token(state: &Mutex<AppState>) -> Result<(reqwest::Clien
         let mut s = state.lock().map_err(|e| AppError::Internal(e.to_string()))?;
         s.token = Some(CachedToken {
             access_token: token.clone(),
-            expires_at: Instant::now() + Duration::from_secs(expires_in),
+            expires_at: SystemTime::now() + Duration::from_secs(expires_in),
         });
     }
 

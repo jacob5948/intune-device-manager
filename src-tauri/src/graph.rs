@@ -1,6 +1,6 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 use thiserror::Error;
 
 const GRAPH_BASE: &str = "https://graph.microsoft.com/beta/deviceManagement";
@@ -151,13 +151,14 @@ struct GraphListResponse<T> {
 #[derive(Debug, Clone)]
 pub struct CachedToken {
     pub access_token: String,
-    pub expires_at: Instant,
+    // Wall clock, not Instant: Instant stops while macOS sleeps, but the token's lifetime doesn't
+    pub expires_at: SystemTime,
 }
 
 impl CachedToken {
     pub fn is_expired(&self) -> bool {
         // Consider expired 5 minutes early to avoid edge cases
-        Instant::now() >= self.expires_at - Duration::from_secs(300)
+        SystemTime::now() + Duration::from_secs(300) >= self.expires_at
     }
 }
 
