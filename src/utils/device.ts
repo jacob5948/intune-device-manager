@@ -68,6 +68,36 @@ export const relativeTime = (dateStr: string | null): string => {
   return `${months}mo ago`;
 };
 
+/** Spelled-out form of relativeTime, for where there is room (e.g., "5 minutes ago") */
+export const relativeTimeLong = (dateStr: string | null): string => {
+  if (!dateStr) return "Never";
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"} ago`;
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return plural(mins, "minute");
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return plural(hours, "hour");
+  const days = Math.floor(hours / 24);
+  if (days < 30) return plural(days, "day");
+  return plural(Math.floor(days / 30), "month");
+};
+
+/** A device that has not checked in for this long is worth noticing */
+export const STALE_SYNC_DAYS = 30;
+
+export const isStaleSync = (dateStr: string | null, now: number = Date.now()): boolean => {
+  if (!dateStr) return true;
+  return now - new Date(dateStr).getTime() > STALE_SYNC_DAYS * 24 * 60 * 60 * 1000;
+};
+
+/** Graph's camelCase value as a label ("retirePending" becomes "Retire pending") */
+export const formatManagementState = (state: string | null): string => {
+  if (!state) return "N/A";
+  const words = state.replace(/([A-Z])/g, " $1").toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
 /** Which device field a plain identifier list is built from */
 export type IdentifierField = "deviceName" | "serialNumber";
 

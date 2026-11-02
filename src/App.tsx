@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import Icon from "@mdi/react";
@@ -14,9 +14,7 @@ import {
   mdiScriptTextPlay,
   mdiClose,
   mdiPlaylistPlus,
-  mdiFormatListBulleted,
   mdiPlaylistRemove,
-  mdiImport,
   mdiExport,
   mdiSelectAll,
   mdiSelectionOff,
@@ -24,7 +22,6 @@ import {
   mdiFolder,
   mdiFolderOpen,
   mdiFolderPlus,
-  mdiSwapVertical,
   mdiCheckboxBlankOutline,
   mdiCheckboxMarked,
   mdiCellphoneRemove,
@@ -32,15 +29,23 @@ import {
 import "./App.css";
 import type { DeviceInfo, RemediationScript, DeviceList, DeviceListFolder, Toast } from "./types";
 import { loadSavedLists, saveLists, loadSavedFolders, saveFolders, loadSavedScripts, saveScripts } from "./hooks/useLocalStorage";
-import { normalizeOs, isWindows, getOsIcon, extractOu, formatDate, matchIdentifiers } from "./utils/device";
+import { normalizeOs, isWindows, getOsIcon, extractOu, formatDate, formatManagementState, isStaleSync, matchIdentifiers, relativeTimeLong } from "./utils/device";
 import type { ExportScope } from "./utils/exportPayload";
+import { idsBetween, placeList, reorderIds } from "./utils/reorder";
 import { useAppUpdate } from "./hooks/useAppUpdate";
 import DeviceItem from "./components/DeviceItem";
 import UpdateBanner from "./components/UpdateBanner";
 import AutopilotView from "./components/AutopilotView";
 import ImportModal, { type ImportPlan } from "./components/ImportModal";
 import ExportModal from "./components/ExportModal";
+import Modal from "./components/Modal";
+import { activateOnKey } from "./utils/keyboard";
 
+
+type ListDropTarget =
+  | { type: "row"; id: string; after: boolean }
+  | { type: "folder"; id: string }
+  | { type: "root" };
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -80,7 +85,9 @@ function App() {
   const [newFolderName, setNewFolderName] = useState("");
   const [renamingFolder, setRenamingFolder] = useState<{ id: string; name: string } | null>(null);
   const [checkedLists, setCheckedLists] = useState<Set<string>>(new Set());
-  const [reorderMode, setReorderMode] = useState(false);
+  const [listDrag, setListDrag] = useState<{ kind: "list" | "folder"; id: string; target: ListDropTarget | null } | null>(null);
+  /** Where a shift-click range starts: the last list checked or unchecked by a plain click */
+  const listCheckAnchor = useRef<string | null>(null);
   const [activeView, setActiveView] = useState<"devices" | "autopilot">("devices");
 
   const update = useAppUpdate();
@@ -281,7 +288,7 @@ function App() {
       }
     }
     showToast(`Wipe: ${ok} succeeded, ${fail} failed`, ok > 0 ? "success" : "error");
-    clearChecked();
+    endBulkAction();
   };
 
   const openRemediationModal = () => {
@@ -331,7 +338,7 @@ function App() {
     setShowNewList(false);
     if (addChecked && deviceIds.length > 0) {
       showToast(`Created list "${name}" with ${deviceIds.length} device(s)`, "success");
-      clearChecked();
+      endBulkAction();
     } else {
       showToast(`Created list "${name}"`, "success");
     }
@@ -344,6 +351,11 @@ function App() {
     setDeviceLists(updated);
     saveLists(updated);
     if (activeList === listId) setActiveList(null);
+    setCheckedLists((prev) => {
+      const next = new Set(prev);
+      next.delete(listId);
+      return next;
+    });
   };
 
   const renameList = (id: string, newName: string) => {
@@ -366,7 +378,7 @@ function App() {
     saveLists(updated);
     const list = updated.find((l) => l.id === listId);
     showToast(`Added ${checkedDevices.size} device(s) to "${list?.name}"`, "success");
-    clearChecked();
+    endBulkAction();
   };
 
   const removeDevicesFromList = (listId: string, deviceIds: Set<string>) => {
@@ -487,61 +499,155 @@ function App() {
     });
   };
 
-  // ── List reordering ──
+  // ── List drag and drop ──
 
-  const moveList = (listId: string, direction: "up" | "down") => {
-    const list = deviceLists.find((l) => l.id === listId);
-    if (!list) return;
-    const folderId = list.folderId;
-    // Get siblings sorted, then normalize their orders first to avoid duplicates
-    const siblings = deviceLists
-      .filter((l) => (folderId ? l.folderId === folderId : !l.folderId))
-      .sort((a, b) => a.order - b.order);
-    const idx = siblings.findIndex((l) => l.id === listId);
-    if (idx === -1) return;
-    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-    if (swapIdx < 0 || swapIdx >= siblings.length) return;
-
-    // Normalize orders first, then swap
-    siblings.forEach((l, i) => { l.order = i; });
-    const tmp = siblings[idx].order;
-    siblings[idx].order = siblings[swapIdx].order;
-    siblings[swapIdx].order = tmp;
-
-    // Build the order map and apply
-    const orderMap = new Map(siblings.map((l) => [l.id, l.order]));
-    const updated = deviceLists.map((l) =>
-      orderMap.has(l.id) ? { ...l, order: orderMap.get(l.id)! } : l
-    );
+  const moveList = (listId: string, folderId: string | null, targetId: string | null, after: boolean) => {
+    const updated = placeList(deviceLists, listId, folderId, targetId, after);
     setDeviceLists(updated);
     saveLists(updated);
+    if (folderId) setExpandedFolders((prev) => new Set([...prev, folderId]));
   };
 
-  const moveFolder = (folderId: string, direction: "up" | "down") => {
+  const reorderFolder = (folderId: string, targetId: string, after: boolean) => {
     const sorted = [...listFolders].sort((a, b) => a.order - b.order);
-    const idx = sorted.findIndex((f) => f.id === folderId);
-    if (idx === -1) return;
-    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-    if (swapIdx < 0 || swapIdx >= sorted.length) return;
-
-    // Normalize then swap
-    sorted.forEach((f, i) => { f.order = i; });
-    const tmp = sorted[idx].order;
-    sorted[idx].order = sorted[swapIdx].order;
-    sorted[swapIdx].order = tmp;
-
-    const orderMap = new Map(sorted.map((f) => [f.id, f.order]));
-    const updated = listFolders.map((f) =>
-      orderMap.has(f.id) ? { ...f, order: orderMap.get(f.id)! } : f
+    const orderMap = new Map(
+      reorderIds(sorted.map((f) => f.id), folderId, targetId, after).map((id, i) => [id, i])
     );
+    const updated = listFolders.map((f) => ({ ...f, order: orderMap.get(f.id) ?? f.order }));
     setListFolders(updated);
     saveFolders(updated);
+  };
+
+  /** The row a keyboard move was made from may lose focus when React shifts it in the DOM */
+  const refocusRow = (selector: string) =>
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(selector)?.focus());
+
+  const moveListByKey = (list: DeviceList, step: -1 | 1) => {
+    const folderId = list.folderId ?? null;
+    const siblings = folderId ? listsInFolder(folderId) : rootLists;
+    const target = siblings[siblings.findIndex((l) => l.id === list.id) + step];
+    if (!target) return;
+    moveList(list.id, folderId, target.id, step === 1);
+    refocusRow(`[data-drag-list="${list.id}"]`);
+  };
+
+  const moveFolderByKey = (folderId: string, step: -1 | 1) => {
+    const target = sortedFolders[sortedFolders.findIndex((f) => f.id === folderId) + step];
+    if (!target) return;
+    reorderFolder(folderId, target.id, step === 1);
+    refocusRow(`[data-drag-folder="${folderId}"] .list-folder-header`);
+  };
+
+  /** Alt+Up and Alt+Down, the keyboard's way to do what dragging does */
+  const onMoveKey = (e: KeyboardEvent, move: (step: -1 | 1) => void) => {
+    if (e.target !== e.currentTarget || !e.altKey) return;
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    e.preventDefault();
+    move(e.key === "ArrowUp" ? -1 : 1);
+  };
+
+  /**
+   * Pointer events rather than HTML5 drag-and-drop: Tauri's window-level file drop
+   * handling swallows HTML5 drag events in the webview. Nothing starts until the pointer
+   * has moved a few pixels, so rows still click normally.
+   */
+  const startListDrag = (e: ReactPointerEvent, kind: "list" | "folder", id: string) => {
+    if (e.button !== 0 || e.ctrlKey) return;
+    if ((e.target as Element).closest("button, input, .list-item-checkbox")) return;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let started = false;
+    let target: ListDropTarget | null = null;
+    let lastX = startX;
+    let lastY = startY;
+    const section = (e.currentTarget as Element).closest<HTMLElement>(".lists-section");
+
+    const findTarget = (x: number, y: number): ListDropTarget | null => {
+      const el = document.elementFromPoint(x, y);
+      if (!el) return null;
+      const rowTarget = (row: HTMLElement, rowId: string): ListDropTarget | null => {
+        if (rowId === id) return null;
+        const rect = row.getBoundingClientRect();
+        return { type: "row", id: rowId, after: y > rect.top + rect.height / 2 };
+      };
+      const folder = el.closest<HTMLElement>("[data-drag-folder]");
+      if (kind === "folder") return folder ? rowTarget(folder, folder.dataset.dragFolder!) : null;
+      const row = el.closest<HTMLElement>("[data-drag-list]");
+      if (row) return rowTarget(row, row.dataset.dragList!);
+      if (folder) return { type: "folder", id: folder.dataset.dragFolder! };
+      return el.closest("[data-drag-root]") ? { type: "root" } : null;
+    };
+
+    const onMove = (ev: PointerEvent) => {
+      lastX = ev.clientX;
+      lastY = ev.clientY;
+      if (!started && Math.hypot(lastX - startX, lastY - startY) < 4) return;
+      started = true;
+      target = findTarget(ev.clientX, ev.clientY);
+      setListDrag({ kind, id, target });
+    };
+    // Rows can be scrolled out of view, so dragging near an edge has to bring them back
+    const autoScroll = setInterval(() => {
+      if (!started || !section) return;
+      const rect = section.getBoundingClientRect();
+      const headerHeight = section.querySelector(".lists-header")?.clientHeight ?? 0;
+      const step = lastY < rect.top + headerHeight + 24 ? -6 : lastY > rect.bottom - 24 ? 6 : 0;
+      const before = section.scrollTop;
+      section.scrollTop += step;
+      if (section.scrollTop === before) return;
+      target = findTarget(lastX, lastY);
+      setListDrag({ kind, id, target });
+    }, 16);
+    const finish = (commit: boolean) => {
+      clearInterval(autoScroll);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      setListDrag(null);
+      if (!started) return;
+      // A drag released on the row it began on would otherwise also count as a click
+      const swallowClick = (ev: MouseEvent) => ev.stopPropagation();
+      window.addEventListener("click", swallowClick, { capture: true, once: true });
+      setTimeout(() => window.removeEventListener("click", swallowClick, { capture: true }), 0);
+      if (!commit || !target) return;
+      if (kind === "folder") {
+        if (target.type === "row") reorderFolder(id, target.id, target.after);
+      } else if (target.type === "row") {
+        const targetId = target.id;
+        const folderId = deviceLists.find((l) => l.id === targetId)?.folderId ?? null;
+        moveList(id, folderId, targetId, target.after);
+      } else {
+        moveList(id, target.type === "folder" ? target.id : null, null, false);
+      }
+    };
+    const onUp = () => finish(true);
+    const onCancel = () => finish(false);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+  };
+
+  const dragClass = (id: string) => {
+    if (!listDrag) return "";
+    if (listDrag.id === id) return " drag-source";
+    const target = listDrag.target;
+    if (target?.type === "folder" && target.id === id) return " drop-into";
+    if (target?.type === "row" && target.id === id) return target.after ? " drop-after" : " drop-before";
+    return "";
   };
 
   // ── List selection for bulk actions ──
 
   const toggleListChecked = (listId: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const anchor = listCheckAnchor.current ?? activeList;
+    const range = e.shiftKey && anchor ? idsBetween(visibleListIds, anchor, listId) : [];
+    if (range.length > 0) {
+      listCheckAnchor.current = anchor;
+      setCheckedLists((prev) => new Set([...prev, ...range]));
+      return;
+    }
+    listCheckAnchor.current = listId;
     setCheckedLists((prev) => {
       const next = new Set(prev);
       if (next.has(listId)) next.delete(listId);
@@ -563,6 +669,7 @@ function App() {
       // dependency, so without this guard every list mutation — create, rename,
       // recolour, reorder, import — silently wiped the device selection.
       if (previous > 0) setCheckedDevices(new Set());
+      listCheckAnchor.current = null;
       return;
     }
     const allIds = new Set<string>();
@@ -587,6 +694,15 @@ function App() {
   const listsInFolder = useCallback(
     (folderId: string) => deviceLists.filter((l) => l.folderId === folderId).sort((a, b) => a.order - b.order),
     [deviceLists]
+  );
+
+  /** Lists in the order they appear on screen; a collapsed folder's lists are not there */
+  const visibleListIds = useMemo(
+    () => [
+      ...sortedFolders.flatMap((f) => (expandedFolders.has(f.id) ? listsInFolder(f.id) : [])),
+      ...rootLists,
+    ].map((l) => l.id),
+    [sortedFolders, expandedFolders, listsInFolder, rootLists]
   );
 
   const getListWindowsDevices = (listId: string): DeviceInfo[] => {
@@ -671,7 +787,7 @@ function App() {
         `"${selectedScript.displayName}": ${ok} succeeded, ${fail} failed`,
         ok > 0 ? "success" : "error"
       );
-      clearChecked();
+      endBulkAction();
     } else if (selectedDevice) {
       showToast(`Running "${selectedScript.displayName}" on ${selectedDevice.deviceName}...`, "info");
       try {
@@ -707,7 +823,15 @@ function App() {
     });
   }, []);
 
-  const clearChecked = () => setCheckedDevices(new Set());
+  /** Selection made through list checkboxes outlives an action, so the bar stays up for the next one */
+  const endBulkAction = () => {
+    if (checkedLists.size === 0) setCheckedDevices(new Set());
+  };
+
+  const clearSelection = () => {
+    setCheckedDevices(new Set());
+    setCheckedLists(new Set());
+  };
 
   const selectAllVisible = () => {
     // sortedDevices is computed from filteredDevices, so it respects all current filters
@@ -768,7 +892,7 @@ function App() {
       }
     }
     showToast(`Sync: ${ok} succeeded, ${fail} failed`, ok > 0 ? "success" : "error");
-    clearChecked();
+    endBulkAction();
   };
 
   const handleBulkRestart = async () => {
@@ -787,7 +911,7 @@ function App() {
       }
     }
     showToast(`Restart: ${ok} succeeded, ${fail} failed`, ok > 0 ? "success" : "error");
-    clearChecked();
+    endBulkAction();
   };
 
   const handleBulkWipe = () => {
@@ -958,15 +1082,29 @@ function App() {
     return (
       <div
         key={list.id}
-        className={`list-item${activeList === list.id ? " active" : ""}${isListChecked ? " list-checked" : ""}`}
+        className={`list-item${activeList === list.id ? " active" : ""}${isListChecked ? " list-checked" : ""}${dragClass(list.id)}`}
+        data-drag-list={list.id}
+        role="button"
+        tabIndex={0}
+        aria-label={list.name}
+        aria-current={activeList === list.id ? "true" : undefined}
+        aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
         onClick={() => setActiveList(list.id)}
+        onKeyDown={(e) => {
+          activateOnKey(() => setActiveList(list.id))(e);
+          onMoveKey(e, (step) => moveListByKey(list, step));
+        }}
+        onPointerDown={(e) => startListDrag(e, "list", list.id)}
         onContextMenu={(e) => {
           e.preventDefault();
           setListContextMenu({ listId: list.id, x: e.clientX, y: e.clientY });
         }}
       >
-        <div
+        <button
           className="list-item-checkbox"
+          role="checkbox"
+          aria-checked={isListChecked}
+          aria-label={`Select ${list.name}`}
           onClick={(e) => toggleListChecked(list.id, e)}
           title={isListChecked ? "Deselect list for bulk actions" : "Select list for bulk actions"}
         >
@@ -974,11 +1112,10 @@ function App() {
             path={isListChecked ? mdiCheckboxMarked : mdiCheckboxBlankOutline}
             size={0.7}
           />
-        </div>
+        </button>
         {list.color && (
           <span className="list-color-dot" style={{ background: list.color }} />
         )}
-        <Icon path={mdiFormatListBulleted} size={0.6} className="list-item-icon" />
         {renamingList?.id === list.id ? (
           <input
             className="list-rename-input"
@@ -1003,33 +1140,13 @@ function App() {
             </span>
           )}
         </span>
-        {reorderMode && (
-          <div className="list-item-reorder">
-            <button
-              className="reorder-btn"
-              onClick={(e) => { e.stopPropagation(); moveList(list.id, "up"); }}
-              title="Move up"
-            >
-              <Icon path={mdiChevronRight} size={0.5} style={{ transform: "rotate(-90deg)" }} />
-            </button>
-            <button
-              className="reorder-btn"
-              onClick={(e) => { e.stopPropagation(); moveList(list.id, "down"); }}
-              title="Move down"
-            >
-              <Icon path={mdiChevronRight} size={0.5} style={{ transform: "rotate(90deg)" }} />
-            </button>
-          </div>
-        )}
-        {!reorderMode && (
-          <button
-            className="list-item-delete"
-            onClick={(e) => { e.stopPropagation(); deleteList(list.id); }}
-            title="Delete list"
-          >
-            <Icon path={mdiClose} size={0.5} />
-          </button>
-        )}
+        <button
+          className="list-item-delete"
+          onClick={(e) => { e.stopPropagation(); deleteList(list.id); }}
+          title="Delete list" aria-label="Delete list"
+        >
+          <Icon path={mdiClose} size={0.5} />
+        </button>
       </div>
     );
   };
@@ -1042,30 +1159,36 @@ function App() {
           <h1>Intune Device Manager</h1>
         </div>
         <div className="login-screen">
-          <h2>Sign In</h2>
+          <h2>Sign in</h2>
           <p>
-            Enter your Azure AD app registration credentials to connect to
+            Enter your Microsoft Entra ID app registration details to connect to
             Microsoft Graph.
           </p>
           <div className="login-form">
-            <input
-              type="text"
-              placeholder="Tenant ID"
-              value={tenantId}
-              onChange={(e) => setTenantId(e.target.value)}
-            />
-            <input
-              type="text"
-              placeholder="Client ID"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-            />
-            <input
-              type="password"
-              placeholder="Client Secret"
-              value={clientSecret}
-              onChange={(e) => setClientSecret(e.target.value)}
-            />
+            <label className="login-field">
+              Tenant ID
+              <input
+                type="text"
+                value={tenantId}
+                onChange={(e) => setTenantId(e.target.value)}
+              />
+            </label>
+            <label className="login-field">
+              Client ID
+              <input
+                type="text"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+              />
+            </label>
+            <label className="login-field">
+              Client secret
+              <input
+                type="password"
+                value={clientSecret}
+                onChange={(e) => setClientSecret(e.target.value)}
+              />
+            </label>
             <label className="save-secret-label">
               <input
                 type="checkbox"
@@ -1082,7 +1205,7 @@ function App() {
               {loggingIn ? (
                 <><span className="spinner" />Authenticating...</>
               ) : (
-                "Sign In"
+                "Sign in"
               )}
             </button>
           </div>
@@ -1154,12 +1277,12 @@ function App() {
           <button
             className="btn-secondary btn-small btn-icon"
             onClick={() => setShowSettings(true)}
-            title="Settings"
+            title="Settings" aria-label="Settings"
           >
             <Icon path={mdiCog} size={0.65} />
           </button>
           <button className="btn-secondary btn-small" onClick={handleLogout}>
-            Sign Out
+            Sign out
           </button>
         </div>
       </div>
@@ -1194,120 +1317,6 @@ function App() {
         }} />
       </div>
 
-      {activeView === "devices" && checkedDevices.size > 0 && (
-        <div className="bulk-bar">
-          <div className="bulk-left">
-            <button className="bulk-close" onClick={clearChecked} title="Clear selection">
-              <Icon path={mdiClose} size={0.6} />
-            </button>
-            <span className="bulk-info">
-              {checkedDevices.size} selected
-              {checkedWindowsDevices.length < checkedDevices.size && (
-                <span className="bulk-note">
-                  {" "}({checkedWindowsDevices.length} Windows)
-                </span>
-              )}
-            </span>
-          </div>
-          <div className="bulk-actions-group">
-            <button
-              className="bulk-btn"
-              onClick={handleBulkSync}
-              disabled={checkedWindowsDevices.length === 0}
-            >
-              <Icon path={mdiSync} size={0.65} />
-              <span>Sync</span>
-            </button>
-            <div className="bulk-divider" />
-            <button
-              className="bulk-btn"
-              onClick={handleBulkRestart}
-              disabled={checkedWindowsDevices.length === 0}
-            >
-              <Icon path={mdiRestart} size={0.65} />
-              <span>Restart</span>
-            </button>
-            <div className="bulk-divider" />
-            <button
-              className="bulk-btn"
-              onClick={handleBulkRemediation}
-              disabled={checkedWindowsDevices.length === 0}
-            >
-              <Icon path={mdiScriptTextPlay} size={0.65} />
-              <span>Run remediation</span>
-            </button>
-            <div className="bulk-divider" />
-            <button
-              className="bulk-btn"
-              onClick={() => openExport({ kind: "selected" }, activeList)}
-              disabled={checkedList.length === 0}
-            >
-              <Icon path={mdiExport} size={0.65} />
-              <span>Export…</span>
-            </button>
-            <div className="bulk-divider" />
-            <button
-              className="bulk-btn bulk-btn-danger"
-              onClick={handleBulkWipe}
-              disabled={checkedWindowsDevices.length === 0}
-            >
-              <Icon path={mdiCellphoneRemove} size={0.65} />
-              <span>Wipe</span>
-            </button>
-            <div className="bulk-divider" />
-            {activeListObj ? (
-              <button
-                className="bulk-btn"
-                onClick={() => {
-                  removeDevicesFromList(activeListObj.id, checkedDevices);
-                  showToast(`Removed ${checkedDevices.size} device(s) from "${activeListObj.name}"`, "success");
-                  clearChecked();
-                }}
-              >
-                <Icon path={mdiPlaylistRemove} size={0.65} />
-                <span>Remove from list</span>
-              </button>
-            ) : (
-              <div className="bulk-list-dropdown">
-                <button
-                  className="bulk-btn"
-                  onClick={() => setShowNewList(!showNewList)}
-                >
-                  <Icon path={mdiPlaylistPlus} size={0.65} />
-                  <span>Add to list</span>
-                </button>
-                {showNewList && (
-                  <div className="bulk-list-menu">
-                    {deviceLists.map((list) => (
-                      <button
-                        key={list.id}
-                        className="bulk-list-menu-item"
-                        onClick={() => { addCheckedToList(list.id); setShowNewList(false); }}
-                      >
-                        {list.name}
-                      </button>
-                    ))}
-                    <div className="bulk-list-menu-new">
-                      <input
-                        type="text"
-                        placeholder="New list name..."
-                        value={newListName}
-                        onChange={(e) => setNewListName(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") { createList(true); } }}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                      <button className="btn-primary btn-small" onClick={() => createList(true)}>
-                        <Icon path={mdiPlus} size={0.6} />
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {activeView === "devices" && (
       <div className="main-content">
         <div className="sidebar">
@@ -1316,50 +1325,41 @@ function App() {
             <div className="lists-header">
               <span className="lists-title">Lists</span>
               <div className="lists-header-actions">
-                {deviceLists.length > 1 && (
-                  <button
-                    className={`lists-header-btn${reorderMode ? " active" : ""}`}
-                    onClick={() => setReorderMode(!reorderMode)}
-                    title={reorderMode ? "Done reordering" : "Reorder lists"}
-                  >
-                    <Icon path={mdiSwapVertical} size={0.55} />
-                  </button>
-                )}
                 <button
-                  className="lists-header-btn"
-                  onClick={() => setShowNewFolder(true)}
-                  title="New folder"
-                >
-                  <Icon path={mdiFolderPlus} size={0.55} />
-                </button>
-                <button
-                  className="lists-header-btn"
+                  className="lists-header-text-btn"
                   onClick={() => setImportOpen(true)}
                   title="Import devices by name, serial number, or file"
                 >
-                  <Icon path={mdiImport} size={0.55} />
+                  Import
                 </button>
                 <button
-                  className="lists-header-btn"
+                  className="lists-header-text-btn"
                   onClick={() =>
                     openExport(
-                      deviceLists.length > 0
-                        ? { kind: "allLists" }
-                        : checkedList.length > 0
-                          ? { kind: "selected" }
+                      checkedList.length > 0
+                        ? { kind: "selected" }
+                        : deviceLists.length > 0
+                          ? { kind: "allLists" }
                           : { kind: "visible" },
                       activeList
                     )
                   }
                   title="Export devices or lists"
                 >
-                  <Icon path={mdiExport} size={0.55} />
+                  Export
+                </button>
+                <button
+                  className="lists-header-btn"
+                  onClick={() => setShowNewFolder(true)}
+                  title="New folder" aria-label="New folder"
+                >
+                  <Icon path={mdiFolderPlus} size={0.55} />
                 </button>
                 {checkedLists.size > 0 && (
                   <button
                     className="lists-header-btn"
                     onClick={() => setCheckedLists(new Set())}
-                    title="Clear list selection"
+                    title="Clear list selection" aria-label="Clear list selection"
                   >
                     <Icon path={mdiClose} size={0.55} />
                   </button>
@@ -1401,10 +1401,23 @@ function App() {
               const folderLists = listsInFolder(folder.id);
               const isExpanded = expandedFolders.has(folder.id);
               return (
-                <div key={folder.id} className="list-folder">
+                <div
+                  key={folder.id}
+                  className={`list-folder${dragClass(folder.id)}`}
+                  data-drag-folder={folder.id}
+                >
                   <div
                     className="list-folder-header"
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={isExpanded}
+                    aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
                     onClick={() => toggleFolder(folder.id)}
+                    onKeyDown={(e) => {
+                      activateOnKey(() => toggleFolder(folder.id))(e);
+                      onMoveKey(e, (step) => moveFolderByKey(folder.id, step));
+                    }}
+                    onPointerDown={(e) => startListDrag(e, "folder", folder.id)}
                   >
                     <Icon path={isExpanded ? mdiChevronDown : mdiChevronRight} size={0.55} className="folder-chevron" />
                     <Icon path={isExpanded ? mdiFolderOpen : mdiFolder} size={0.55} className="folder-icon" />
@@ -1426,35 +1439,17 @@ function App() {
                     )}
                     <span className="folder-count">{folderLists.length}</span>
                     <div className="folder-actions">
-                      {reorderMode && (
-                        <>
-                          <button
-                            className="folder-action-btn"
-                            onClick={(e) => { e.stopPropagation(); moveFolder(folder.id, "up"); }}
-                            title="Move folder up"
-                          >
-                            <Icon path={mdiChevronRight} size={0.45} style={{ transform: "rotate(-90deg)" }} />
-                          </button>
-                          <button
-                            className="folder-action-btn"
-                            onClick={(e) => { e.stopPropagation(); moveFolder(folder.id, "down"); }}
-                            title="Move folder down"
-                          >
-                            <Icon path={mdiChevronRight} size={0.45} style={{ transform: "rotate(90deg)" }} />
-                          </button>
-                        </>
-                      )}
                       <button
                         className="folder-action-btn"
                         onClick={(e) => { e.stopPropagation(); setRenamingFolder({ id: folder.id, name: folder.name }); }}
-                        title="Rename folder"
+                        title="Rename folder" aria-label="Rename folder"
                       >
                         <Icon path={mdiPencil} size={0.45} />
                       </button>
                       <button
                         className="folder-action-btn"
                         onClick={(e) => { e.stopPropagation(); deleteFolder(folder.id); }}
-                        title="Delete folder"
+                        title="Delete folder" aria-label="Delete folder"
                       >
                         <Icon path={mdiDelete} size={0.45} />
                       </button>
@@ -1462,7 +1457,7 @@ function App() {
                   </div>
                   {isExpanded && folderLists.map((list) => renderListItem(list))}
                   {isExpanded && folderLists.length === 0 && (
-                    <div className="folder-empty">Use right-click → "Move to folder" to add lists</div>
+                    <div className="folder-empty">Drag lists here to add them</div>
                   )}
                 </div>
               );
@@ -1470,6 +1465,16 @@ function App() {
 
             {/* Root-level lists (no folder) */}
             {rootLists.map((list) => renderListItem(list))}
+
+            {/* Only offered mid-drag, and last so it moves nothing above it */}
+            {listDrag?.kind === "list" && deviceLists.find((l) => l.id === listDrag.id)?.folderId && (
+              <div
+                className={`list-drop-root${listDrag.target?.type === "root" ? " drop-into" : ""}`}
+                data-drag-root
+              >
+                Drop here to remove from folder
+              </div>
+            )}
           </div>
 
           <div className="search-box">
@@ -1504,7 +1509,11 @@ function App() {
               <div key={ou} className="device-group">
                 <div
                   className="device-group-header"
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={expandedGroups.has(ou)}
                   onClick={() => toggleGroup(ou)}
+                  onKeyDown={activateOnKey(() => toggleGroup(ou))}
                 >
                   <Icon
                     path={expandedGroups.has(ou) ? mdiChevronDown : mdiChevronRight}
@@ -1537,10 +1546,123 @@ function App() {
         </div>
 
         <div className="detail-panel">
+          {/* Sits in this pane so the sidebar never moves when a selection starts */}
+          {checkedDevices.size > 0 && (
+            <div className="bulk-bar">
+              <div className="bulk-left">
+                <button className="bulk-close" onClick={clearSelection} title="Clear selection" aria-label="Clear selection">
+                  <Icon path={mdiClose} size={0.6} />
+                </button>
+                <span className="bulk-info">
+                  {checkedDevices.size} selected
+                  {checkedWindowsDevices.length < checkedDevices.size && (
+                    <span className="bulk-note">
+                      {checkedWindowsDevices.length} Windows
+                    </span>
+                  )}
+                </span>
+              </div>
+              <div className="bulk-actions-group">
+                <button
+                  className="bulk-btn"
+                  onClick={handleBulkSync}
+                  disabled={checkedWindowsDevices.length === 0}
+                >
+                  <Icon path={mdiSync} size={0.65} />
+                  <span>Sync</span>
+                </button>
+                <div className="bulk-divider" />
+                <button
+                  className="bulk-btn"
+                  onClick={handleBulkRestart}
+                  disabled={checkedWindowsDevices.length === 0}
+                >
+                  <Icon path={mdiRestart} size={0.65} />
+                  <span>Restart</span>
+                </button>
+                <div className="bulk-divider" />
+                <button
+                  className="bulk-btn"
+                  onClick={handleBulkRemediation}
+                  disabled={checkedWindowsDevices.length === 0}
+                >
+                  <Icon path={mdiScriptTextPlay} size={0.65} />
+                  <span>Run remediation</span>
+                </button>
+                <div className="bulk-divider" />
+                <button
+                  className="bulk-btn"
+                  onClick={() => openExport({ kind: "selected" }, activeList)}
+                  disabled={checkedList.length === 0}
+                >
+                  <Icon path={mdiExport} size={0.65} />
+                  <span>Export…</span>
+                </button>
+                <div className="bulk-divider" />
+                {activeListObj ? (
+                  <button
+                    className="bulk-btn"
+                    onClick={() => {
+                      removeDevicesFromList(activeListObj.id, checkedDevices);
+                      showToast(`Removed ${checkedDevices.size} device(s) from "${activeListObj.name}"`, "success");
+                      endBulkAction();
+                    }}
+                  >
+                    <Icon path={mdiPlaylistRemove} size={0.65} />
+                    <span>Remove from list</span>
+                  </button>
+                ) : (
+                  <div className="bulk-list-dropdown">
+                    <button
+                      className="bulk-btn"
+                      onClick={() => setShowNewList(!showNewList)}
+                    >
+                      <Icon path={mdiPlaylistPlus} size={0.65} />
+                      <span>Add to list</span>
+                    </button>
+                    {showNewList && (
+                      <div className="bulk-list-menu">
+                        {deviceLists.map((list) => (
+                          <button
+                            key={list.id}
+                            className="bulk-list-menu-item"
+                            onClick={() => { addCheckedToList(list.id); setShowNewList(false); }}
+                          >
+                            {list.name}
+                          </button>
+                        ))}
+                        <div className="bulk-list-menu-new">
+                          <input
+                            type="text"
+                            placeholder="New list name..."
+                            value={newListName}
+                            onChange={(e) => setNewListName(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") { createList(true); } }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          <button className="btn-primary btn-small" onClick={() => createList(true)}>
+                            <Icon path={mdiPlus} size={0.6} />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <button
+                  className="bulk-btn bulk-btn-danger"
+                  onClick={handleBulkWipe}
+                  disabled={checkedWindowsDevices.length === 0}
+                >
+                  <Icon path={mdiCellphoneRemove} size={0.65} />
+                  <span>Wipe</span>
+                </button>
+              </div>
+            </div>
+          )}
           {selectedDevice ? (
             <div className="device-detail">
               {/* Intune-style action toolbar */}
-              {isWindows(selectedDevice) ? (
+              {checkedDevices.size > 0 ? null : isWindows(selectedDevice) ? (
                 <div className="action-toolbar">
                   <button
                     className="toolbar-btn"
@@ -1609,13 +1731,18 @@ function App() {
                   <span className="detail-value">
                     {complianceBadge(selectedDevice.complianceState)}
                   </span>
-                  <span className="detail-label">Last Sync</span>
+                  <span className="detail-label">Last sync</span>
                   <span className="detail-value">
-                    {formatDate(selectedDevice.lastSyncDateTime)}
+                    <span
+                      className={isStaleSync(selectedDevice.lastSyncDateTime) ? "stale-sync" : undefined}
+                      title={formatDate(selectedDevice.lastSyncDateTime)}
+                    >
+                      {relativeTimeLong(selectedDevice.lastSyncDateTime)}
+                    </span>
                   </span>
                   <span className="detail-label">Management</span>
                   <span className="detail-value">
-                    {selectedDevice.managementState || "N/A"}
+                    {formatManagementState(selectedDevice.managementState)}
                   </span>
                 </div>
               </div>
@@ -1650,9 +1777,8 @@ function App() {
 
       {/* Typed confirmation modal for wipe */}
       {wipeConfirm && (
-        <div className="modal-overlay" onClick={() => setWipeConfirm(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Confirm Wipe</h3>
+        <Modal onClose={() => setWipeConfirm(null)}>
+            <h3>Confirm wipe</h3>
             <p className="destructive-confirm-text">
               You are about to wipe <strong>{wipeConfirm.targets.length}</strong> device
               {wipeConfirm.targets.length === 1 ? "" : "s"}. This factory resets the device
@@ -1696,15 +1822,13 @@ function App() {
                 Wipe {wipeConfirm.targets.length} device{wipeConfirm.targets.length === 1 ? "" : "s"}
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {/* Remediation modal */}
       {showRemediation && (
-        <div className="modal-overlay" onClick={() => setShowRemediation(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Run Remediation Script</h3>
+        <Modal onClose={() => setShowRemediation(false)}>
+            <h3>Run remediation script</h3>
             <div className="modal-list">
               {scripts.map((script) => (
                 <div
@@ -1740,18 +1864,16 @@ function App() {
                 Run Script
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {/* Settings modal */}
       {showSettings && (
-        <div className="modal-overlay" onClick={() => setShowSettings(false)}>
-          <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
+        <Modal className="settings-modal" onClose={() => setShowSettings(false)}>
             <h3>Settings</h3>
 
             <div className="settings-section">
-              <h4>Remediation Scripts</h4>
+              <h4>Remediation scripts</h4>
               <p className="settings-hint">
                 Add scripts manually by their ID and a friendly name.
                 Enter the full script policy ID (e.g. &quot;abc123-..._1&quot;).
@@ -1768,14 +1890,14 @@ function App() {
                 />
                 <input
                   type="text"
-                  placeholder="Display Name"
+                  placeholder="Display name"
                   value={newScriptName}
                   onChange={(e) => setNewScriptName(e.target.value)}
                 />
                 <button
                   className="btn-primary btn-small btn-icon"
                   onClick={addScript}
-                  title="Add Script"
+                  title="Add script" aria-label="Add script"
                 >
                   <Icon path={mdiPlus} size={0.7} />
                 </button>
@@ -1791,7 +1913,7 @@ function App() {
                     <button
                       className="btn-icon btn-delete"
                       onClick={() => removeScript(s.id)}
-                      title="Remove"
+                      title="Remove" aria-label="Remove"
                     >
                       <Icon path={mdiDelete} size={0.65} />
                     </button>
@@ -1845,8 +1967,7 @@ function App() {
                 Done
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {/* List context menu */}
@@ -1920,6 +2041,7 @@ function App() {
                   <button
                     key={color}
                     className={`color-swatch${currentList?.color === color ? " active" : ""}`}
+                    aria-label={`Color ${color}`}
                     style={{ background: color }}
                     onClick={() => {
                       const updated = deviceLists.map((l) =>
@@ -1937,7 +2059,7 @@ function App() {
                 return currentList?.color ? (
                   <button
                     className="color-swatch color-swatch-clear"
-                    title="Remove color"
+                    title="Remove color" aria-label="Remove color"
                     onClick={() => {
                       const updated = deviceLists.map((l) =>
                         l.id === listContextMenu.listId ? { ...l, color: null } : l

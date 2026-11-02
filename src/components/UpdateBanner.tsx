@@ -44,7 +44,7 @@ const UpdateBanner = ({ update }: { update: AppUpdate }) => {
           <button className="btn-primary btn-small" onClick={installUpdate}>
             Install and restart
           </button>
-          <button className="update-banner-close" onClick={dismiss} title="Not now">
+          <button className="update-banner-close" onClick={dismiss} title="Not now" aria-label="Not now">
             <Icon path={mdiClose} size={0.6} />
           </button>
         </div>

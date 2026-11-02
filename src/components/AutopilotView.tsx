@@ -3,10 +3,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { open, confirm } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { parseCsvLine } from "../utils/csv";
+import { activateOnKey } from "../utils/keyboard";
+import Modal from "./Modal";
 import Icon from "@mdi/react";
 import {
   mdiDelete,
   mdiImport,
+  mdiRefresh,
   mdiTag,
   mdiChevronDown,
   mdiChevronRight,
@@ -116,13 +119,13 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
   const groupedDevices = useMemo(() => {
     const groups = new Map<string, AutopilotDevice[]>();
     for (const device of sortedDevices) {
-      const tag = device.groupTag || "(No Group Tag)";
+      const tag = device.groupTag || "(No group tag)";
       if (!groups.has(tag)) groups.set(tag, []);
       groups.get(tag)!.push(device);
     }
     const sorted = [...groups.entries()].sort(([a], [b]) => {
-      if (a === "(No Group Tag)") return 1;
-      if (b === "(No Group Tag)") return -1;
+      if (a === "(No group tag)") return 1;
+      if (b === "(No group tag)") return -1;
       return a.localeCompare(b);
     });
     return sorted;
@@ -344,7 +347,7 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
       {checkedDevices.size > 0 && (
         <div className="bulk-bar">
           <div className="bulk-left">
-            <button className="bulk-close" onClick={clearChecked} title="Clear selection">
+            <button className="bulk-close" onClick={clearChecked} title="Clear selection" aria-label="Clear selection">
               <Icon path={mdiClose} size={0.6} />
             </button>
             <span className="bulk-info">{checkedDevices.size} selected</span>
@@ -396,6 +399,15 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
         <div className="sidebar">
           <div className="autopilot-sidebar-header">
             <button
+              className="btn-secondary btn-small btn-icon"
+              onClick={loadAutopilotDevices}
+              disabled={loading}
+              title="Refresh"
+              aria-label="Refresh"
+            >
+              <Icon path={mdiRefresh} size={0.6} />
+            </button>
+            <button
               className="btn-secondary btn-small"
               onClick={handleImportCsv}
               title="Import Autopilot hardware hashes from a CSV"
@@ -444,7 +456,14 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
           <div className="device-list">
             {groupedDevices.map(([tag, tagDevices]) => (
               <div key={tag} className="device-group">
-                <div className="device-group-header" onClick={() => toggleGroup(tag)}>
+                <div
+                  className="device-group-header"
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={expandedGroups.has(tag)}
+                  onClick={() => toggleGroup(tag)}
+                  onKeyDown={activateOnKey(() => toggleGroup(tag))}
+                >
                   <Icon
                     path={expandedGroups.has(tag) ? mdiChevronDown : mdiChevronRight}
                     size={0.65}
@@ -462,11 +481,18 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
                       <div
                         key={device.id}
                         className={`device-item${isSelected ? " selected" : ""}${isChecked ? " checked" : ""}`}
+                        role="button"
+                        tabIndex={0}
+                        aria-current={isSelected ? "true" : undefined}
                         onClick={() => setSelectedDevice(device)}
+                        onKeyDown={activateOnKey(() => setSelectedDevice(device))}
                       >
                         <div className="device-item-content">
-                          <div
+                          <button
                             className="device-icon-wrapper"
+                            role="checkbox"
+                            aria-checked={isChecked}
+                            aria-label={`Select ${device.serialNumber || device.id}`}
                             onClick={(e) => {
                               e.stopPropagation();
                               toggleChecked(device.id);
@@ -478,7 +504,7 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
                               size={0.85}
                               className="device-checkbox-icon"
                             />
-                          </div>
+                          </button>
                           <div className="device-item-text">
                             <div className="device-name">
                               {device.serialNumber || device.id.substring(0, 8) + "..."}
@@ -497,7 +523,7 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
             ))}
             {sortedDevices.length === 0 && !loading && (
               <div className="empty-state">
-                {autopilotDevices.length === 0 ? "No Autopilot devices loaded" : "No matches"}
+                {autopilotDevices.length === 0 ? "No Autopilot devices yet" : "No matches"}
               </div>
             )}
           </div>
@@ -537,7 +563,7 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
                 </h2>
 
                 <div className="detail-grid">
-                  <span className="detail-label">Serial Number</span>
+                  <span className="detail-label">Serial number</span>
                   <span className="detail-value">{selectedDevice.serialNumber || "N/A"}</span>
 
                   <span className="detail-label">Manufacturer</span>
@@ -546,7 +572,7 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
                   <span className="detail-label">Model</span>
                   <span className="detail-value">{selectedDevice.model || "N/A"}</span>
 
-                  <span className="detail-label">Group Tag</span>
+                  <span className="detail-label">Group tag</span>
                   <span className="detail-value">
                     {editingGroupTag?.id === selectedDevice.id ? (
                       <span className="group-tag-edit">
@@ -607,19 +633,19 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
                       "N/A"}
                   </span>
 
-                  <span className="detail-label">Last Contacted</span>
+                  <span className="detail-label">Last contacted</span>
                   <span className="detail-value">
                     {formatDate(selectedDevice.lastContactedDateTime)}
                   </span>
 
-                  <span className="detail-label">Azure AD Device ID</span>
+                  <span className="detail-label">Entra device ID</span>
                   <span className="detail-value">
                     {selectedDevice.azureActiveDirectoryDeviceId ||
                       selectedDevice.azureAdDeviceId ||
                       "N/A"}
                   </span>
 
-                  <span className="detail-label">Managed Device</span>
+                  <span className="detail-label">Managed device</span>
                   <span className="detail-value">
                     {selectedDevice.managedDeviceId ? (
                       managedDeviceIds.has(selectedDevice.managedDeviceId) ? (
@@ -644,16 +670,26 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
               </div>
             </div>
           ) : (
-            <div className="no-selection">Select an Autopilot device to view details</div>
+            <div className="no-selection">
+              {autopilotDevices.length === 0 && !loading ? (
+                <div className="no-selection-empty">
+                  <span>No Autopilot devices yet</span>
+                  <button className="btn-primary" onClick={handleImportCsv}>
+                    Import hardware hashes…
+                  </button>
+                </div>
+              ) : (
+                "Select an Autopilot device to view details"
+              )}
+            </div>
           )}
         </div>
       </div>
 
       {/* Group tag edit modal - for inline editing */}
       {editingGroupTag && !selectedDevice && (
-        <div className="modal-overlay" onClick={() => setEditingGroupTag(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Set Group Tag</h3>
+        <Modal onClose={() => setEditingGroupTag(null)}>
+            <h3>Set group tag</h3>
             <div className="modal-list">
               <input
                 type="text"
@@ -678,15 +714,13 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
                 Save
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {/* Typed confirmation modal for bulk delete */}
       {deleteConfirm && (
-        <div className="modal-overlay" onClick={() => setDeleteConfirm(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Confirm Bulk Delete</h3>
+        <Modal onClose={() => setDeleteConfirm(null)}>
+            <h3>Confirm bulk delete</h3>
             <p className="destructive-confirm-text">
               You are about to delete <strong>{deleteConfirm.count}</strong> Autopilot device(s). This cannot be undone.
             </p>
@@ -718,8 +752,7 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
                 Delete {deleteConfirm.count} devices
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </>
   );

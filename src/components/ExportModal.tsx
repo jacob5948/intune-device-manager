@@ -3,6 +3,7 @@ import Icon from "@mdi/react";
 import { mdiContentCopy } from "@mdi/js";
 import { save } from "@tauri-apps/plugin-dialog";
 import { copyText } from "../utils/clipboard";
+import Modal from "./Modal";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { downloadDir, join } from "@tauri-apps/api/path";
 import type { Toast } from "../types";
@@ -193,8 +194,7 @@ const ExportModal = ({ initialScope, ctx, listScopeId, onClose, showToast }: Exp
   const plainPreview = payload.text.split("\r\n").filter(Boolean).slice(0, 3);
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal export-modal" onClick={(e) => e.stopPropagation()}>
+    <Modal className="export-modal" onClose={onClose}>
         <h3>Export</h3>
 
         <div className="io-field">
@@ -234,6 +234,9 @@ const ExportModal = ({ initialScope, ctx, listScopeId, onClose, showToast }: Exp
                 </label>
               );
             })}
+            {scope.kind === "allLists" && (
+              <p className="io-field-hint">All saved lists can only export as JSON.</p>
+            )}
           </div>
         </div>
 
@@ -332,7 +335,10 @@ const ExportModal = ({ initialScope, ctx, listScopeId, onClose, showToast }: Exp
           )}
         </div>
 
-        {payload.note && <p className="export-note">{payload.note}</p>}
+        {/* The JSON note only summarises; the others say something was left out */}
+        {payload.note && (
+          <p className={`export-note${format === "lists" ? "" : " export-note-warn"}`}>{payload.note}</p>
+        )}
 
         <div className="modal-actions">
           <button
@@ -350,8 +356,7 @@ const ExportModal = ({ initialScope, ctx, listScopeId, onClose, showToast }: Exp
             Save…
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 };
 

@@ -8,6 +8,7 @@ import { matchIdentifiers } from "../utils/device";
 import { resolveListDevices } from "../utils/listFile";
 import { sniffImportText, fileBaseName } from "../utils/importSource";
 import { copyText } from "../utils/clipboard";
+import Modal from "./Modal";
 
 /** What the modal hands back to App, which owns all list mutation */
 export type ImportPlan =
@@ -200,14 +201,22 @@ const ImportModal = ({ devices, lists, onCommit, onClose, showToast }: ImportMod
   const showListSummary = source.kind === "lists";
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal import-modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Import Devices</h3>
-        <p className="io-hint">
-          Paste device names or serial numbers — one per line, or separated by commas. Or
-          open a .txt, .csv or .json file; what it contains is worked out by reading it,
-          not from its name.
-        </p>
+    <Modal
+      className="import-modal"
+      onClose={onClose}
+      // A stray click outside must not throw away what was pasted or opened
+      onOverlayClick={() => { if (rawFile === null && text.trim() === "") onClose(); }}
+    >
+        <h3>Import devices</h3>
+        <div className="import-source">
+          <p className="io-hint">
+            Paste device names or serial numbers, or open a file.
+          </p>
+          <button className="btn-secondary import-open-file" onClick={openFile}>
+            <Icon path={mdiFileUploadOutline} size={0.6} />
+            Open file…
+          </button>
+        </div>
 
         {showListSummary ? (
           <div className="import-summary">
@@ -265,10 +274,6 @@ const ImportModal = ({ devices, lists, onCommit, onClose, showToast }: ImportMod
         {source.kind === "unknown" && <p className="import-error">{source.message}</p>}
 
         <div className="io-status">
-          <button className="btn-link" onClick={openFile}>
-            <Icon path={mdiFileUploadOutline} size={0.6} />
-            Open file…
-          </button>
           {!showListSummary && (
             <label className="io-radio io-checkbox">
               <input
@@ -287,7 +292,7 @@ const ImportModal = ({ devices, lists, onCommit, onClose, showToast }: ImportMod
         </div>
 
         <div className="io-field">
-          <span className="io-field-label">Add to</span>
+          <span className="io-field-label">Save to</span>
           <div className="io-radio-row">
             {showListSummary && resolution.lists.length > 1 && (
               <label className="io-radio">
@@ -374,8 +379,7 @@ const ImportModal = ({ devices, lists, onCommit, onClose, showToast }: ImportMod
             Import {resolution.total || ""}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 };
 

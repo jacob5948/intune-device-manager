@@ -29,7 +29,7 @@ npm run tauri build   # production
 
 ## Key Patterns
 - Access token never touches the frontend — managed entirely in Rust state
-- Token auto-refreshes with 5-minute early expiry buffer
+- Token auto-refreshes with 5-minute early expiry buffer. Expiry is tracked with `SystemTime`, never `Instant`: `Instant` stops while macOS sleeps, so a token looks valid after wake and Graph rejects it with a lifetime error
 - Graph API requests use exponential backoff retry (3 attempts, respects Retry-After)
 - Device IDs are validated server-side before use in API URLs
 - Custom device lists and folders stored in localStorage
@@ -42,6 +42,8 @@ npm run tauri build   # production
 - Writing files is limited by the Tauri fs scope to `$DOCUMENT`, `$DOWNLOAD` and `$DESKTOP`; the export dialog defaults into Downloads and offers Copy as the way out
 - Clipboard writes go through `src/utils/clipboard.ts`, which uses `tauri-plugin-clipboard-manager` and falls back to `navigator.clipboard`. Do not call `navigator.clipboard` directly — a macOS release build serves the webview from `tauri://localhost`, where it is not dependably available, so a browser-only call works in `tauri dev` and fails for real users
 - Autopilot hardware-hash import (`AutopilotView.tsx`) is deliberately separate: it POSTs hashes to Graph to create Autopilot records, and shares nothing with device import
+- Every dialog goes through `src/components/Modal.tsx`, which handles Escape, the focus trap and returning focus. Do not hand-roll a `modal-overlay`
+- Secondary text uses `var(--text-secondary)` rather than a hex grey, so it stays readable in both colour schemes. Solid blue is reserved for the open device and primary buttons
 - Client secrets stored in OS keychain (macOS Keychain / Windows Credential Manager)
 - Groups collapsed by default, bulk actions require double confirmation for >100 devices
 - Bulk destructive actions (e.g. delete) must require the user to type a confirmation phrase: "I really want to delete <n> devices" where <n> is the number of selected devices. Use a modal with a text input, not a native confirm dialog. The delete button must stay disabled until the phrase matches exactly. Apply this pattern to any new bulk destructive action.
