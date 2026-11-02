@@ -74,7 +74,6 @@ function App() {
   const [newScriptId, setNewScriptId] = useState("");
   const [newScriptName, setNewScriptName] = useState("");
   const [deviceLists, setDeviceLists] = useState<DeviceList[]>(loadSavedLists);
-  const [activeList, setActiveList] = useState<string | null>(null);
   const [showNewList, setShowNewList] = useState(false);
   const [newListName, setNewListName] = useState("");
   const [listContextMenu, setListContextMenu] = useState<{ listId: string; x: number; y: number } | null>(null);
@@ -84,10 +83,12 @@ function App() {
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [renamingFolder, setRenamingFolder] = useState<{ id: string; name: string } | null>(null);
-  const [checkedLists, setCheckedLists] = useState<Set<string>>(new Set());
+  /** Which lists' devices are shown. Empty means all devices. */
+  const [selectedLists, setSelectedLists] = useState<Set<string>>(new Set());
+  const [deleteListsConfirm, setDeleteListsConfirm] = useState<{ ids: string[]; input: string } | null>(null);
   const [listDrag, setListDrag] = useState<{ kind: "list" | "folder"; id: string; target: ListDropTarget | null } | null>(null);
-  /** Where a shift-click range starts: the last list checked or unchecked by a plain click */
-  const listCheckAnchor = useRef<string | null>(null);
+  /** Where a shift-click range starts: the last list clicked without shift */
+  const listSelectAnchor = useRef<string | null>(null);
   const [activeView, setActiveView] = useState<"devices" | "autopilot">("devices");
 
   const update = useAppUpdate();
@@ -344,19 +345,53 @@ function App() {
     }
   };
 
-  const deleteList = async (listId: string) => {
-    const list = deviceLists.find((l) => l.id === listId);
-    if (!(await confirm(`Delete list "${list?.name}"?`))) return;
-    const updated = deviceLists.filter((l) => l.id !== listId);
+  const removeLists = (ids: string[]) => {
+    const updated = deviceLists.filter((l) => !ids.includes(l.id));
     setDeviceLists(updated);
     saveLists(updated);
-    if (activeList === listId) setActiveList(null);
-    setCheckedLists((prev) => {
-      const next = new Set(prev);
-      next.delete(listId);
-      return next;
-    });
+    if (ids.some((id) => selectedLists.has(id))) {
+      selectLists([...selectedLists].filter((id) => !ids.includes(id)));
+    }
   };
+
+  /** One list gets a plain confirm; several are a bulk delete, so the phrase must be typed */
+  const requestDeleteLists = async (ids: string[]) => {
+    if (ids.length > 1) {
+      setDeleteListsConfirm({ ids, input: "" });
+      return;
+    }
+    const list = deviceLists.find((l) => l.id === ids[0]);
+    if (!list) return;
+    if (await confirm(`Delete list "${list.name}"?`)) removeLists(ids);
+  };
+
+  const deleteListsPhrase = (count: number) => `I really want to delete ${count} lists`;
+
+  const executeDeleteLists = () => {
+    if (!deleteListsConfirm) return;
+    const { ids, input } = deleteListsConfirm;
+    if (input !== deleteListsPhrase(ids.length)) return;
+    setDeleteListsConfirm(null);
+    removeLists(ids);
+    showToast(`Deleted ${ids.length} lists`, "success");
+  };
+
+  // The Delete key (fn+delete on a Mac). Listened for on the window because WebKit does not
+  // focus a clicked button, so focus is not dependably on the row that was just selected.
+  useEffect(() => {
+    const onKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== "Delete" || activeView !== "devices") return;
+      const target = e.target as Element;
+      if (target.closest("input, textarea, select, [role=dialog]")) return;
+      const focusedRow = target.closest<HTMLElement>("[data-drag-list]")?.dataset.dragList;
+      const ids = focusedRow && !selectedLists.has(focusedRow) ? [focusedRow] : [...selectedLists];
+      if (ids.length === 0) return;
+      e.preventDefault();
+      requestDeleteLists(ids);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
 
   const renameList = (id: string, newName: string) => {
     const name = newName.trim();
@@ -381,9 +416,9 @@ function App() {
     endBulkAction();
   };
 
-  const removeDevicesFromList = (listId: string, deviceIds: Set<string>) => {
+  const removeDevicesFromLists = (listIds: string[], deviceIds: Set<string>) => {
     const updated = deviceLists.map((l) => {
-      if (l.id !== listId) return l;
+      if (!listIds.includes(l.id)) return l;
       return { ...l, deviceIds: l.deviceIds.filter((id) => !deviceIds.has(id)) };
     });
     setDeviceLists(updated);
@@ -636,49 +671,59 @@ function App() {
     return "";
   };
 
-  // ── List selection for bulk actions ──
+  // ── List selection ──
 
-  const toggleListChecked = (listId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const anchor = listCheckAnchor.current ?? activeList;
-    const range = e.shiftKey && anchor ? idsBetween(visibleListIds, anchor, listId) : [];
-    if (range.length > 0) {
-      listCheckAnchor.current = anchor;
-      setCheckedLists((prev) => new Set([...prev, ...range]));
-      return;
-    }
-    listCheckAnchor.current = listId;
-    setCheckedLists((prev) => {
-      const next = new Set(prev);
-      if (next.has(listId)) next.delete(listId);
-      else next.add(listId);
-      return next;
-    });
+  /** Device checks only make sense for what is on screen, so a new selection clears them */
+  const selectLists = (ids: Iterable<string>) => {
+    const next = new Set(ids);
+    if (next.size === selectedLists.size && [...next].every((id) => selectedLists.has(id))) return;
+    setSelectedLists(next);
+    setCheckedDevices(new Set());
+    if (next.size === 0) listSelectAnchor.current = null;
   };
 
-  /** Previous count, so a deviceLists change is not mistaken for deselecting every list */
-  const prevCheckedListCount = useRef(0);
-
-  // When lists are checked/unchecked, sync device selection to match
-  useEffect(() => {
-    const previous = prevCheckedListCount.current;
-    prevCheckedListCount.current = checkedLists.size;
-
-    if (checkedLists.size === 0) {
-      // Only clear when list selection was genuinely given up. deviceLists is a
-      // dependency, so without this guard every list mutation — create, rename,
-      // recolour, reorder, import — silently wiped the device selection.
-      if (previous > 0) setCheckedDevices(new Set());
-      listCheckAnchor.current = null;
+  /** Plain click selects only this list; shift adds a range; checkbox or cmd/ctrl toggles it */
+  const selectListFromClick = (listId: string, e: React.MouseEvent, toggle: boolean) => {
+    e.stopPropagation();
+    const anchor =
+      listSelectAnchor.current ?? (selectedLists.size === 1 ? [...selectedLists][0] : null);
+    const range = e.shiftKey && anchor ? idsBetween(visibleListIds, anchor, listId) : [];
+    if (range.length > 0) {
+      listSelectAnchor.current = anchor;
+      selectLists([...selectedLists, ...range]);
       return;
     }
-    const allIds = new Set<string>();
-    for (const listId of checkedLists) {
-      const list = deviceLists.find((l) => l.id === listId);
-      if (list) list.deviceIds.forEach((id) => allIds.add(id));
+    listSelectAnchor.current = listId;
+    if (toggle || e.metaKey || e.ctrlKey) {
+      const next = new Set(selectedLists);
+      if (next.has(listId)) next.delete(listId);
+      else next.add(listId);
+      selectLists(next);
+    } else {
+      selectLists([listId]);
     }
-    setCheckedDevices(allIds);
-  }, [checkedLists, deviceLists]);
+  };
+
+  /** A folder stands for its lists: plain click shows only them; cmd/ctrl adds or removes them */
+  const selectFolderFromClick = (folderId: string, e?: React.MouseEvent) => {
+    const ids = listsInFolder(folderId).map((l) => l.id);
+    // Nothing to show, so opening it is the useful thing: it says how to fill it
+    if (ids.length === 0) {
+      toggleFolder(folderId);
+      return;
+    }
+    listSelectAnchor.current = null;
+    if (e?.metaKey || e?.ctrlKey) {
+      const allSelected = ids.every((id) => selectedLists.has(id));
+      selectLists(
+        allSelected
+          ? [...selectedLists].filter((id) => !ids.includes(id))
+          : [...selectedLists, ...ids]
+      );
+    } else {
+      selectLists(ids);
+    }
+  };
 
   // Computed: sorted folders and lists for rendering
   const sortedFolders = useMemo(
@@ -823,15 +868,12 @@ function App() {
     });
   }, []);
 
-  /** Selection made through list checkboxes outlives an action, so the bar stays up for the next one */
+  /** While viewing lists, checks outlive an action so the bar stays up for the next one */
   const endBulkAction = () => {
-    if (checkedLists.size === 0) setCheckedDevices(new Set());
+    if (selectedLists.size === 0) setCheckedDevices(new Set());
   };
 
-  const clearSelection = () => {
-    setCheckedDevices(new Set());
-    setCheckedLists(new Set());
-  };
+  const clearChecked = () => setCheckedDevices(new Set());
 
   const selectAllVisible = () => {
     // sortedDevices is computed from filteredDevices, so it respects all current filters
@@ -937,10 +979,12 @@ function App() {
     return acc;
   }, {}), [devices]);
 
-  const activeListObj = useMemo(
-    () => activeList ? deviceLists.find((l) => l.id === activeList) : null,
-    [activeList, deviceLists]
+  const selectedListObjs = useMemo(
+    () => deviceLists.filter((l) => selectedLists.has(l.id)),
+    [selectedLists, deviceLists]
   );
+  /** The list to offer as an export scope, when exactly one is selected */
+  const singleSelectedList = selectedListObjs.length === 1 ? selectedListObjs[0].id : null;
 
   // Compute filtered counts per list (based on active OS tab)
   const listFilteredCounts = useMemo(() => {
@@ -973,14 +1017,16 @@ function App() {
   const filteredDevices = useMemo(() => {
     let result = devices;
 
-    // Filter by list if active
-    if (activeListObj) {
-      const idSet = new Set(activeListObj.deviceIds);
+    // Filter to the selected lists
+    if (selectedListObjs.length > 0) {
+      // A device in several selected lists is still one row
+      const ids = [...new Set(selectedListObjs.flatMap((l) => l.deviceIds))];
+      const idSet = new Set(ids);
       const found = result.filter((d) => idSet.has(d.id));
 
       // Create placeholders for devices in the list but not found in Intune
       const foundIds = new Set(found.map((d) => d.id));
-      const missing: DeviceInfo[] = activeListObj.deviceIds
+      const missing: DeviceInfo[] = ids
         .filter((id) => !foundIds.has(id))
         .map((id) => ({
           id,
@@ -1021,7 +1067,7 @@ function App() {
     }
 
     return result;
-  }, [devices, activeTab, searchQuery, activeListObj]);
+  }, [devices, activeTab, searchQuery, selectedListObjs]);
 
   const sortedDevices = useMemo(() => {
     return [...filteredDevices].sort((a, b) =>
@@ -1078,20 +1124,20 @@ function App() {
   const renderListItem = (list: DeviceList) => {
     const counts = listFilteredCounts[list.id] || { total: 0, filtered: 0, missing: 0 };
     const showFiltered = activeTab !== "All" && counts.filtered !== counts.total;
-    const isListChecked = checkedLists.has(list.id);
+    const isListSelected = selectedLists.has(list.id);
     return (
       <div
         key={list.id}
-        className={`list-item${activeList === list.id ? " active" : ""}${isListChecked ? " list-checked" : ""}${dragClass(list.id)}`}
+        className={`list-item${isListSelected ? " list-checked" : ""}${dragClass(list.id)}`}
         data-drag-list={list.id}
         role="button"
         tabIndex={0}
         aria-label={list.name}
-        aria-current={activeList === list.id ? "true" : undefined}
+        aria-current={isListSelected ? "true" : undefined}
         aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-        onClick={() => setActiveList(list.id)}
+        onClick={(e) => selectListFromClick(list.id, e, false)}
         onKeyDown={(e) => {
-          activateOnKey(() => setActiveList(list.id))(e);
+          activateOnKey(() => selectLists([list.id]))(e);
           onMoveKey(e, (step) => moveListByKey(list, step));
         }}
         onPointerDown={(e) => startListDrag(e, "list", list.id)}
@@ -1103,13 +1149,13 @@ function App() {
         <button
           className="list-item-checkbox"
           role="checkbox"
-          aria-checked={isListChecked}
+          aria-checked={isListSelected}
           aria-label={`Select ${list.name}`}
-          onClick={(e) => toggleListChecked(list.id, e)}
-          title={isListChecked ? "Deselect list for bulk actions" : "Select list for bulk actions"}
+          onClick={(e) => selectListFromClick(list.id, e, true)}
+          title={isListSelected ? "Remove from selection" : "Add to selection"}
         >
           <Icon
-            path={isListChecked ? mdiCheckboxMarked : mdiCheckboxBlankOutline}
+            path={isListSelected ? mdiCheckboxMarked : mdiCheckboxBlankOutline}
             size={0.7}
           />
         </button>
@@ -1140,13 +1186,6 @@ function App() {
             </span>
           )}
         </span>
-        <button
-          className="list-item-delete"
-          onClick={(e) => { e.stopPropagation(); deleteList(list.id); }}
-          title="Delete list" aria-label="Delete list"
-        >
-          <Icon path={mdiClose} size={0.5} />
-        </button>
       </div>
     );
   };
@@ -1311,7 +1350,7 @@ function App() {
           if (device) {
             setActiveView("devices");
             setActiveTab("All");
-            setActiveList(null);
+            setSelectedLists(new Set());
             handleSelectDevice(device);
           }
         }} />
@@ -1341,24 +1380,17 @@ function App() {
                         : deviceLists.length > 0
                           ? { kind: "allLists" }
                           : { kind: "visible" },
-                      activeList
+                      singleSelectedList
                     )
                   }
                   title="Export devices or lists"
                 >
                   Export
                 </button>
-                <button
-                  className="lists-header-btn"
-                  onClick={() => setShowNewFolder(true)}
-                  title="New folder" aria-label="New folder"
-                >
-                  <Icon path={mdiFolderPlus} size={0.55} />
-                </button>
-                {checkedLists.size > 0 && (
+                {selectedLists.size > 0 && (
                   <button
                     className="lists-header-btn"
-                    onClick={() => setCheckedLists(new Set())}
+                    onClick={() => selectLists([])}
                     title="Clear list selection" aria-label="Clear list selection"
                   >
                     <Icon path={mdiClose} size={0.55} />
@@ -1367,29 +1399,10 @@ function App() {
               </div>
             </div>
 
-            {showNewFolder && (
-              <div className="folder-new-form">
-                <input
-                  type="text"
-                  placeholder="Folder name..."
-                  value={newFolderName}
-                  onChange={(e) => setNewFolderName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") createFolder();
-                    if (e.key === "Escape") { setShowNewFolder(false); setNewFolderName(""); }
-                  }}
-                  autoFocus
-                />
-                <button className="btn-primary btn-small btn-icon" onClick={createFolder}>
-                  <Icon path={mdiPlus} size={0.5} />
-                </button>
-              </div>
-            )}
-
             {deviceLists.length > 0 && (
               <button
-                className={`list-item ${activeList === null ? "active" : ""}`}
-                onClick={() => { setActiveList(null); setCheckedLists(new Set()); }}
+                className={`list-item ${selectedLists.size === 0 ? "active" : ""}`}
+                onClick={() => selectLists([])}
               >
                 <Icon path={mdiDevices} size={0.6} />
                 All Devices
@@ -1400,6 +1413,8 @@ function App() {
             {sortedFolders.map((folder) => {
               const folderLists = listsInFolder(folder.id);
               const isExpanded = expandedFolders.has(folder.id);
+              const isFolderSelected =
+                folderLists.length > 0 && folderLists.every((l) => selectedLists.has(l.id));
               return (
                 <div
                   key={folder.id}
@@ -1407,19 +1422,27 @@ function App() {
                   data-drag-folder={folder.id}
                 >
                   <div
-                    className="list-folder-header"
+                    className={`list-folder-header${isFolderSelected ? " selected" : ""}`}
                     role="button"
                     tabIndex={0}
-                    aria-expanded={isExpanded}
+                    aria-current={isFolderSelected ? "true" : undefined}
                     aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-                    onClick={() => toggleFolder(folder.id)}
+                    onClick={(e) => selectFolderFromClick(folder.id, e)}
                     onKeyDown={(e) => {
-                      activateOnKey(() => toggleFolder(folder.id))(e);
+                      activateOnKey(() => selectFolderFromClick(folder.id))(e);
                       onMoveKey(e, (step) => moveFolderByKey(folder.id, step));
                     }}
                     onPointerDown={(e) => startListDrag(e, "folder", folder.id)}
                   >
-                    <Icon path={isExpanded ? mdiChevronDown : mdiChevronRight} size={0.55} className="folder-chevron" />
+                    <button
+                      className="folder-chevron"
+                      aria-expanded={isExpanded}
+                      aria-label={isExpanded ? `Collapse ${folder.name}` : `Expand ${folder.name}`}
+                      title={isExpanded ? "Collapse folder" : "Expand folder"}
+                      onClick={(e) => { e.stopPropagation(); toggleFolder(folder.id); }}
+                    >
+                      <Icon path={isExpanded ? mdiChevronDown : mdiChevronRight} size={0.55} />
+                    </button>
                     <Icon path={isExpanded ? mdiFolderOpen : mdiFolder} size={0.55} className="folder-icon" />
                     {renamingFolder?.id === folder.id ? (
                       <input
@@ -1463,6 +1486,28 @@ function App() {
               );
             })}
 
+            {/* Sits where the new folder will land */}
+            {showNewFolder && (
+              <div className="list-folder-header folder-new-row">
+                <Icon path={mdiFolder} size={0.55} className="folder-icon" />
+                <input
+                  className="list-rename-input"
+                  type="text"
+                  aria-label="New folder name"
+                  placeholder="Folder name"
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newFolderName.trim()) createFolder();
+                    if (e.key === "Escape") { setShowNewFolder(false); setNewFolderName(""); }
+                  }}
+                  // A typed name survives clicking elsewhere; an empty row just goes away
+                  onBlur={() => { if (!newFolderName.trim()) setShowNewFolder(false); }}
+                  autoFocus
+                />
+              </div>
+            )}
+
             {/* Root-level lists (no folder) */}
             {rootLists.map((list) => renderListItem(list))}
 
@@ -1474,6 +1519,13 @@ function App() {
               >
                 Drop here to remove from folder
               </div>
+            )}
+
+            {!listDrag && !showNewFolder && (
+              <button className="list-new-folder" onClick={() => setShowNewFolder(true)}>
+                <Icon path={mdiFolderPlus} size={0.55} />
+                New folder
+              </button>
             )}
           </div>
 
@@ -1550,7 +1602,7 @@ function App() {
           {checkedDevices.size > 0 && (
             <div className="bulk-bar">
               <div className="bulk-left">
-                <button className="bulk-close" onClick={clearSelection} title="Clear selection" aria-label="Clear selection">
+                <button className="bulk-close" onClick={clearChecked} title="Clear selection" aria-label="Clear selection">
                   <Icon path={mdiClose} size={0.6} />
                 </button>
                 <span className="bulk-info">
@@ -1592,24 +1644,29 @@ function App() {
                 <div className="bulk-divider" />
                 <button
                   className="bulk-btn"
-                  onClick={() => openExport({ kind: "selected" }, activeList)}
+                  onClick={() => openExport({ kind: "selected" }, singleSelectedList)}
                   disabled={checkedList.length === 0}
                 >
                   <Icon path={mdiExport} size={0.65} />
                   <span>Export…</span>
                 </button>
                 <div className="bulk-divider" />
-                {activeListObj ? (
+                {selectedListObjs.length > 0 ? (
                   <button
                     className="bulk-btn"
                     onClick={() => {
-                      removeDevicesFromList(activeListObj.id, checkedDevices);
-                      showToast(`Removed ${checkedDevices.size} device(s) from "${activeListObj.name}"`, "success");
-                      endBulkAction();
+                      removeDevicesFromLists(selectedListObjs.map((l) => l.id), checkedDevices);
+                      showToast(
+                        selectedListObjs.length === 1
+                          ? `Removed ${checkedDevices.size} device(s) from "${selectedListObjs[0].name}"`
+                          : `Removed ${checkedDevices.size} device(s) from ${selectedListObjs.length} lists`,
+                        "success"
+                      );
+                      clearChecked();
                     }}
                   >
                     <Icon path={mdiPlaylistRemove} size={0.65} />
-                    <span>Remove from list</span>
+                    <span>{selectedListObjs.length === 1 ? "Remove from list" : "Remove from lists"}</span>
                   </button>
                 ) : (
                   <div className="bulk-list-dropdown">
@@ -1774,6 +1831,48 @@ function App() {
         />
       )}
 
+
+      {/* Typed confirmation modal for deleting several lists */}
+      {deleteListsConfirm && (
+        <Modal onClose={() => setDeleteListsConfirm(null)}>
+          <h3>Confirm delete</h3>
+          <p className="destructive-confirm-text">
+            You are about to delete <strong>{deleteListsConfirm.ids.length}</strong> lists. The
+            devices themselves are not affected.
+          </p>
+          <div className="wipe-target-list">
+            {deviceLists
+              .filter((l) => deleteListsConfirm.ids.includes(l.id))
+              .map((l) => (
+                <div key={l.id} className="wipe-target">{l.name}</div>
+              ))}
+          </div>
+          <p className="destructive-confirm-text">
+            Type <strong className="destructive-confirm-phrase">{deleteListsPhrase(deleteListsConfirm.ids.length)}</strong> to confirm:
+          </p>
+          <input
+            className="destructive-confirm-input"
+            type="text"
+            value={deleteListsConfirm.input}
+            onChange={(e) => setDeleteListsConfirm({ ...deleteListsConfirm, input: e.target.value })}
+            onKeyDown={(e) => { if (e.key === "Enter") executeDeleteLists(); }}
+            placeholder={deleteListsPhrase(deleteListsConfirm.ids.length)}
+            autoFocus
+          />
+          <div className="modal-actions">
+            <button className="btn-secondary" onClick={() => setDeleteListsConfirm(null)}>
+              Cancel
+            </button>
+            <button
+              className="btn-danger"
+              disabled={deleteListsConfirm.input !== deleteListsPhrase(deleteListsConfirm.ids.length)}
+              onClick={executeDeleteLists}
+            >
+              Delete {deleteListsConfirm.ids.length} lists
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {/* Typed confirmation modal for wipe */}
       {wipeConfirm && (
@@ -2126,10 +2225,18 @@ function App() {
             <div className="context-menu-separator" />
             <button
               className="context-menu-item context-menu-danger"
-              onClick={() => { deleteList(listContextMenu.listId); setListContextMenu(null); }}
+              onClick={() => {
+                // Right-clicking inside a multi-selection acts on all of it, as Delete does
+                requestDeleteLists(
+                  selectedLists.has(listContextMenu.listId) ? [...selectedLists] : [listContextMenu.listId]
+                );
+                setListContextMenu(null);
+              }}
             >
               <Icon path={mdiDelete} size={0.6} />
-              Delete list
+              {selectedLists.has(listContextMenu.listId) && selectedLists.size > 1
+                ? `Delete ${selectedLists.size} lists`
+                : "Delete list"}
             </button>
           </div>
         </div>

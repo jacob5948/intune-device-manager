@@ -46,6 +46,7 @@ npm run tauri build   # production
 - Secondary text uses `var(--text-secondary)` rather than a hex grey, so it stays readable in both colour schemes. Solid blue is reserved for the open device and primary buttons
 - Client secrets stored in OS keychain (macOS Keychain / Windows Credential Manager)
 - Groups collapsed by default, bulk actions require double confirmation for >100 devices
+- List selection is one set, `selectedLists` (empty means All Devices): click selects one list, the checkbox or cmd/ctrl toggles, shift adds a range, and clicking a folder selects its lists. It only decides which devices are shown, as the deduped union. Acting on them takes Select all, so the bulk bar and Wipe never appear just from viewing a list
 - Bulk destructive actions (e.g. delete) must require the user to type a confirmation phrase: "I really want to delete <n> devices" where <n> is the number of selected devices. Use a modal with a text input, not a native confirm dialog. The delete button must stay disabled until the phrase matches exactly. Apply this pattern to any new bulk destructive action.
 
 ## Releasing
