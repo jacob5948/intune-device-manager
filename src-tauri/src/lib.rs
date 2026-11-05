@@ -1,6 +1,6 @@
 mod graph;
 
-use graph::{acquire_token, AppError, AppState, AutopilotDevice, AutopilotImportEntry, AutopilotImportResult, AppInstallStatus, CachedToken, Credentials, DeviceInfo, GraphClient, MobileAppSummary};
+use graph::{acquire_token, AppError, AppState, AutopilotDevice, AutopilotImportEntry, AutopilotImportResult, AppInstallStatus, CachedToken, Credentials, DeviceAppState, DeviceInfo, GraphClient, MobileAppSummary};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
@@ -131,10 +131,38 @@ async fn restart_device(state: State<'_>, device_id: String) -> Result<(), AppEr
 }
 
 #[tauri::command]
-async fn wipe_device(state: State<'_>, device_id: String) -> Result<(), AppError> {
+async fn wipe_device(state: State<'_>, device_id: String, apple: Option<bool>) -> Result<(), AppError> {
     let (http_client, token) = get_client_and_token(&state).await?;
     let client = GraphClient::new(&http_client, token);
-    client.wipe_device(&device_id).await
+    client.wipe_device(&device_id, apple.unwrap_or(false)).await
+}
+
+#[tauri::command]
+async fn get_device_app_states(state: State<'_>, device_id: String, device_name: String, upn: Option<String>) -> Result<Vec<DeviceAppState>, AppError> {
+    let (http_client, token) = get_client_and_token(&state).await?;
+    let client = GraphClient::new(&http_client, token);
+    client.get_device_app_states(&device_id, &device_name, upn.as_deref()).await
+}
+
+#[tauri::command]
+async fn lock_device(state: State<'_>, device_id: String) -> Result<(), AppError> {
+    let (http_client, token) = get_client_and_token(&state).await?;
+    let client = GraphClient::new(&http_client, token);
+    client.lock_device(&device_id).await
+}
+
+#[tauri::command]
+async fn remove_passcode(state: State<'_>, device_id: String) -> Result<(), AppError> {
+    let (http_client, token) = get_client_and_token(&state).await?;
+    let client = GraphClient::new(&http_client, token);
+    client.remove_passcode(&device_id).await
+}
+
+#[tauri::command]
+async fn get_lock_pin(state: State<'_>, device_id: String) -> Result<Option<String>, AppError> {
+    let (http_client, token) = get_client_and_token(&state).await?;
+    let client = GraphClient::new(&http_client, token);
+    client.get_lock_pin(&device_id).await
 }
 
 #[tauri::command]
@@ -242,6 +270,10 @@ pub fn run() {
             sync_device,
             restart_device,
             wipe_device,
+            lock_device,
+            remove_passcode,
+            get_lock_pin,
+            get_device_app_states,
             run_remediation,
             get_autopilot_devices,
             delete_autopilot_device,

@@ -153,6 +153,22 @@ pub struct MobileAppSummary {
     pub publisher: Option<String>,
 }
 
+/// One app assigned to a device and its install state there
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceAppState {
+    pub app_id: String,
+    pub app_name: String,
+    pub intent: Option<String>,
+    pub app_version: Option<String>,
+    pub install_state: Option<String>,
+    pub state_detail: Option<String>,
+    pub error_code: Option<String>,
+    pub last_reported: Option<String>,
+    /// Set when the report refused this app (usually throttling); the state above is then the fallback
+    pub report_error: Option<String>,
+}
+
 /// One row of Intune's per-device install report for an app
 #[derive(Debug, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -219,6 +235,52 @@ fn parse_install_report(body: &serde_json::Value) -> Result<InstallReportPage, A
 
     let total = body["TotalRowCount"].as_u64().map_or(rows.len(), |n| n as usize);
     Ok(InstallReportPage { total, rows })
+}
+
+const NO_USER: &str = "00000000-0000-0000-0000-000000000000";
+
+/// The apps Intune means for one device. Its `installState` is often "unknown", so it only
+/// stands in until the report has a row for the device.
+fn parse_intent_list(body: &serde_json::Value) -> Vec<DeviceAppState> {
+    let text = |v: &serde_json::Value| v.as_str().filter(|s| !s.is_empty()).map(str::to_string);
+    body["mobileAppList"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|a| {
+            Some(DeviceAppState {
+                app_id: text(&a["applicationId"])?,
+                app_name: text(&a["displayName"]).unwrap_or_else(|| "Unnamed app".to_string()),
+                intent: text(&a["mobileAppIntent"]),
+                app_version: text(&a["displayVersion"]),
+                install_state: text(&a["installState"]).filter(|s| !s.eq_ignore_ascii_case("unknown")),
+                state_detail: None,
+                error_code: None,
+                last_reported: None,
+                report_error: None,
+            })
+        })
+        .collect()
+}
+
+/// One row per signed-in user; the most recently reported one is the device's state
+fn newest_row_for<'r>(rows: &'r [AppInstallStatus], device_id: &str) -> Option<&'r AppInstallStatus> {
+    rows.iter()
+        .filter(|r| r.device_id.as_deref().is_some_and(|d| d.eq_ignore_ascii_case(device_id)))
+        .max_by(|a, b| a.last_reported.cmp(&b.last_reported))
+}
+
+/// Newest `remoteLock` result's PIN. Times are ISO 8601 UTC, so they compare as text.
+fn latest_unlock_pin(device: &serde_json::Value) -> Option<String> {
+    device["deviceActionResults"]
+        .as_array()?
+        .iter()
+        .filter(|r| r["actionName"].as_str().is_some_and(|n| n.eq_ignore_ascii_case("remoteLock")))
+        .max_by_key(|r| r["startDateTime"].as_str().unwrap_or_default().to_string())
+        .and_then(|r| r["unlockPin"].as_str())
+        .filter(|pin| !pin.is_empty())
+        .map(str::to_string)
 }
 
 /// Report times carry no offset; they are UTC, and the webview would read them as local time
@@ -401,15 +463,48 @@ impl<'a> GraphClient<'a> {
         self.post_action(&url).await
     }
 
-    pub async fn wipe_device(&self, device_id: &str) -> Result<(), AppError> {
+    /// Full wipe. `useProtectedWipe` is a Windows option, so Apple devices are sent without it
+    pub async fn wipe_device(&self, device_id: &str, apple: bool) -> Result<(), AppError> {
         validate_id(device_id, "device_id")?;
         let url = format!("{}/managedDevices/{}/wipe", GRAPH_BASE, device_id);
-        let body = serde_json::json!({
-            "keepEnrollmentData": false,
-            "keepUserData": false,
-            "useProtectedWipe": false,
-        });
+        let body = if apple {
+            serde_json::json!({ "keepEnrollmentData": false, "keepUserData": false })
+        } else {
+            serde_json::json!({
+                "keepEnrollmentData": false,
+                "keepUserData": false,
+                "useProtectedWipe": false,
+            })
+        };
         self.post_action_json(&url, &body).await
+    }
+
+    pub async fn lock_device(&self, device_id: &str) -> Result<(), AppError> {
+        validate_id(device_id, "device_id")?;
+        let url = format!("{}/managedDevices/{}/remoteLock", GRAPH_BASE, device_id);
+        self.post_action(&url).await
+    }
+
+    /// iPhone and iPad only: removes the passcode so the user can set a new one
+    pub async fn remove_passcode(&self, device_id: &str) -> Result<(), AppError> {
+        validate_id(device_id, "device_id")?;
+        let url = format!("{}/managedDevices/{}/resetPasscode", GRAPH_BASE, device_id);
+        self.post_action(&url).await
+    }
+
+    /// The PIN Intune generated for the most recent lock of a Mac, if it has one yet
+    pub async fn get_lock_pin(&self, device_id: &str) -> Result<Option<String>, AppError> {
+        validate_id(device_id, "device_id")?;
+        let url = format!("{}/managedDevices/{}?$select=deviceActionResults", GRAPH_BASE, device_id);
+        let resp = self.request_with_retry(|| {
+            self.client.get(&url).bearer_auth(&self.access_token)
+        }).await?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(AppError::Graph(text));
+        }
+        Ok(latest_unlock_pin(&serde_json::from_str(&text)?))
     }
 
     pub async fn get_autopilot_devices(&self) -> Result<Vec<AutopilotDevice>, AppError> {
@@ -595,6 +690,89 @@ impl<'a> GraphClient<'a> {
         }
     }
 
+    /// Every app assigned to one device, with its state from the same report the App installs
+    /// tab reads. Intune can't filter that report by device, but it can search it by device
+    /// name, so this is one small query per assigned app rather than one per app's whole fleet.
+    pub async fn get_device_app_states(&self, device_id: &str, device_name: &str, upn: Option<&str>) -> Result<Vec<DeviceAppState>, AppError> {
+        use futures_util::{StreamExt, TryStreamExt};
+        validate_id(device_id, "device_id")?;
+        // Device-assigned apps sit under the all-zeros user; the primary user adds user-assigned ones
+        let mut apps = self.get_intent_list(NO_USER, device_id).await?.unwrap_or_default();
+        if let Some(user) = upn.filter(|u| validate_id(u, "user").is_ok()) {
+            for app in self.get_intent_list(user, device_id).await.ok().flatten().unwrap_or_default() {
+                if !apps.iter().any(|a| a.app_id == app.app_id) {
+                    apps.push(app);
+                }
+            }
+        }
+        futures_util::stream::iter(apps)
+            .map(|app| self.fill_app_state(app, device_id, device_name))
+            // Intune throttles this report tightly; the App installs tab may be polling it too
+            .buffered(2)
+            .try_collect()
+            .await
+    }
+
+    /// `None` when Intune has no intent list for this user on the device
+    async fn get_intent_list(&self, user: &str, device_id: &str) -> Result<Option<Vec<DeviceAppState>>, AppError> {
+        let url = format!("{}/users/{}/mobileAppIntentAndStates/{}", GRAPH_BETA, user, device_id);
+        let resp = self.request_with_retry(|| self.client.get(&url).bearer_auth(&self.access_token)).await?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            return Err(graph_error(status, text));
+        }
+        Ok(Some(parse_intent_list(&serde_json::from_str(&text)?)))
+    }
+
+    async fn fill_app_state(&self, mut app: DeviceAppState, device_id: &str, device_name: &str) -> Result<DeviceAppState, AppError> {
+        if validate_app_id(&app.app_id).is_err() {
+            return Ok(app);
+        }
+        let url = format!("{}/reports/microsoft.graph.retrieveDeviceAppInstallationStatusReport", GRAPH_BASE);
+        let body = serde_json::json!({
+            "select": ["DeviceName", "DeviceId", "AppVersion", "AppInstallState",
+                       "AppInstallStateDetails", "HexErrorCode", "LastModifiedDateTime"],
+            "filter": format!("(ApplicationId eq '{}')", app.app_id),
+            "search": device_name,
+            "skip": 0,
+            "top": 50,
+            "orderBy": [],
+        });
+        let resp = self.request_with_retry(|| {
+            self.client.post(&url).bearer_auth(&self.access_token).json(&body)
+        }).await?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AppError::MissingPermission);
+        }
+        // One refused app keeps its fallback state rather than failing the whole list
+        if !status.is_success() {
+            app.report_error = Some(if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                "Intune is busy; try Refresh in a minute".to_string()
+            } else {
+                format!("Intune returned HTTP {}", status.as_u16())
+            });
+            return Ok(app);
+        }
+        let page = parse_install_report(&serde_json::from_str(&text)?)?;
+        // The search matches names containing this one, so keep only this device's rows
+        if let Some(row) = newest_row_for(&page.rows, device_id) {
+            app.install_state = row.install_state.clone();
+            app.state_detail = row.state_detail.clone();
+            app.error_code = row.error_code.clone();
+            app.last_reported = row.last_reported.clone();
+            if row.app_version.is_some() {
+                app.app_version = row.app_version.clone();
+            }
+        }
+        Ok(app)
+    }
+
     async fn get_all_pages<T>(&self, initial_url: &str) -> Result<Vec<T>, AppError>
     where
         T: serde::de::DeserializeOwned,
@@ -655,7 +833,7 @@ impl<'a> GraphClient<'a> {
         Ok(())
     }
 
-    /// Retry a request up to 3 times with exponential backoff on 429 and 5xx errors
+    /// Retry a request up to 3 times with exponential backoff on 429 and 5xx errors; 429 waits longer
     async fn request_with_retry<F>(
         &self,
         build_request: F,
@@ -680,10 +858,13 @@ impl<'a> GraphClient<'a> {
                         .and_then(|v| v.parse::<u64>().ok())
                         .unwrap_or(0);
 
-                    let backoff = std::cmp::max(
-                        retry_after,
-                        2u64.pow(attempt as u32), // 1s, 2s, 4s
-                    );
+                    // A 429 often says "retry after 0", which is no reason to hammer it again at once
+                    let floor = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                        2u64.pow(attempt as u32 + 1) // 2s, 4s, 8s
+                    } else {
+                        2u64.pow(attempt as u32) // 1s, 2s, 4s
+                    };
+                    let backoff = std::cmp::max(retry_after, floor);
                     tokio::time::sleep(Duration::from_secs(backoff)).await;
                     last_resp = Some(resp);
                     continue;
@@ -701,6 +882,48 @@ impl<'a> GraphClient<'a> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn intent_list_drops_unknown_states_and_nameless_ids() {
+        let body = serde_json::json!({ "mobileAppList": [
+            { "applicationId": "a", "displayName": "App A", "mobileAppIntent": "requiredInstall", "displayVersion": "", "installState": "unknown" },
+            { "applicationId": "b", "displayName": "App B", "mobileAppIntent": "requiredInstall", "displayVersion": "2.0", "installState": "installed" },
+            { "displayName": "No id" },
+        ]});
+        let apps = parse_intent_list(&body);
+        assert_eq!(apps.len(), 2);
+        assert_eq!(apps[0].install_state, None);
+        assert_eq!(apps[0].app_version, None);
+        assert_eq!(apps[1].install_state.as_deref(), Some("installed"));
+        assert_eq!(apps[1].app_version.as_deref(), Some("2.0"));
+    }
+
+    #[test]
+    fn newest_row_is_for_this_device_only() {
+        let row = |id: &str, at: &str, state: &str| AppInstallStatus {
+            device_id: Some(id.into()), device_name: None, install_state: Some(state.into()),
+            state_detail: None, error_code: None, last_reported: Some(at.into()), app_version: None,
+        };
+        let rows = vec![
+            row("DEV-1", "2026-06-01T00:00:00Z", "Failed"),
+            row("dev-1", "2026-09-01T00:00:00Z", "Installed"),
+            row("dev-10", "2026-10-01T00:00:00Z", "Failed"),
+        ];
+        assert_eq!(newest_row_for(&rows, "dev-1").and_then(|r| r.install_state.as_deref()), Some("Installed"));
+        assert!(newest_row_for(&rows, "dev-2").is_none());
+    }
+
+    #[test]
+    fn unlock_pin_comes_from_the_newest_lock() {
+        let device = serde_json::json!({ "deviceActionResults": [
+            { "actionName": "remoteLock", "startDateTime": "2026-11-01T10:00:00Z", "unlockPin": "111111" },
+            { "actionName": "syncDevice", "startDateTime": "2026-11-05T10:00:00Z" },
+            { "actionName": "remoteLock", "startDateTime": "2026-11-04T10:00:00Z", "unlockPin": "222222" },
+        ]});
+        assert_eq!(latest_unlock_pin(&device).as_deref(), Some("222222"));
+        assert_eq!(latest_unlock_pin(&serde_json::json!({ "deviceActionResults": [] })), None);
+        assert_eq!(latest_unlock_pin(&serde_json::json!({})), None);
+    }
+
     use super::*;
     use reqwest::StatusCode;
     use serde_json::json;

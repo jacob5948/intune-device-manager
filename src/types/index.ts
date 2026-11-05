@@ -100,3 +100,16 @@ export interface AutopilotImportResult {
 /** OS tab categories */
 export const OS_TABS = ["All", "Windows", "macOS", "iOS", "Android", "Linux"] as const;
 export type OsTab = (typeof OS_TABS)[number];
+
+export interface DeviceAppState {
+  appId: string;
+  appName: string;
+  intent: string | null;
+  appVersion: string | null;
+  installState: string | null;
+  stateDetail: string | null;
+  errorCode: string | null;
+  lastReported: string | null;
+  /** Set when Intune refused this app's report, so the state is a fallback */
+  reportError: string | null;
+}

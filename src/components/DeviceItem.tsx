@@ -16,15 +16,15 @@ interface DeviceItemProps {
   isSelected: boolean;
   isChecked: boolean;
   listTags?: ListTag[];
-  onSelect: (device: DeviceInfo) => void;
-  onToggleCheck: (deviceId: string) => void;
+  /** `toggle` is true for the checkbox itself; modifier keys come from the event */
+  onClick: (device: DeviceInfo, e: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }, toggle: boolean) => void;
 }
 
 /** Tags shown before the rest collapse into "+n", which keeps every row one height */
 const MAX_VISIBLE_TAGS = 2;
 
 const DeviceItem = memo<DeviceItemProps>(
-  ({ device, isSelected, isChecked, listTags, onSelect, onToggleCheck }) => {
+  ({ device, isSelected, isChecked, listTags, onClick }) => {
     const isMissing = device.deviceName.startsWith("[Not found]");
     const stale = !isMissing && isStaleSync(device.lastSyncDateTime);
     const className = `device-item${isSelected ? " selected" : ""}${isChecked ? " checked" : ""}${isMissing ? " missing" : ""}`;
@@ -38,8 +38,10 @@ const DeviceItem = memo<DeviceItemProps>(
         tabIndex={0}
         aria-current={isSelected ? "true" : undefined}
         aria-label={device.deviceName}
-        onClick={() => onSelect(device)}
-        onKeyDown={activateOnKey(() => onSelect(device))}
+        // Shift-click would otherwise also select the row's text
+        onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
+        onClick={(e) => onClick(device, e, false)}
+        onKeyDown={(e) => activateOnKey(() => onClick(device, e, false))(e)}
       >
         <div className="device-item-content">
           <button
@@ -49,7 +51,7 @@ const DeviceItem = memo<DeviceItemProps>(
             aria-label={`Select ${device.deviceName}`}
             onClick={(e) => {
               e.stopPropagation();
-              onToggleCheck(device.id);
+              onClick(device, e, true);
             }}
           >
             <Icon
@@ -59,7 +61,7 @@ const DeviceItem = memo<DeviceItemProps>(
             />
             <Icon
               path={isChecked ? mdiCheckboxMarked : mdiCheckboxBlankOutline}
-              size={0.75}
+              size={0.9}
               className="device-checkbox-icon"
             />
           </button>

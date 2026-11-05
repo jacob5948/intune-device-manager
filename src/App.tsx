@@ -26,6 +26,8 @@ import {
   mdiCheckboxBlankOutline,
   mdiCheckboxMarked,
   mdiCellphoneRemove,
+  mdiLock,
+  mdiLockOpenVariant,
 } from "@mdi/js";
 import "./App.css";
 import type { DeviceInfo, RemediationScript, DeviceList, DeviceListFolder, Toast } from "./types";
@@ -33,7 +35,7 @@ import {
   loadSavedLists, saveLists, loadSavedFolders, saveFolders, loadSavedScripts, saveScripts,
   AUTO_REFRESH_OPTIONS, loadAutoRefreshMinutes, saveAutoRefreshMinutes,
 } from "./hooks/useLocalStorage";
-import { normalizeOs, isWindows, getOsIcon, extractOu, formatDate, formatManagementState, isStaleSync, matchIdentifiers, relativeTimeLong } from "./utils/device";
+import { normalizeOs, isWindows, isApple, takesCommands, getOsIcon, extractOu, formatDate, formatManagementState, isStaleSync, matchIdentifiers, relativeTimeLong } from "./utils/device";
 import type { ExportScope } from "./utils/exportPayload";
 import { idsBetween, placeList, reorderIds } from "./utils/reorder";
 import { useAppUpdate } from "./hooks/useAppUpdate";
@@ -41,10 +43,12 @@ import DeviceItem from "./components/DeviceItem";
 import UpdateBanner from "./components/UpdateBanner";
 import AutopilotView from "./components/AutopilotView";
 import InstallBoardView from "./components/InstallBoardView";
+import DeviceApps, { clearDeviceAppsCache } from "./components/DeviceApps";
 import ImportModal, { type ImportPlan } from "./components/ImportModal";
 import ExportModal from "./components/ExportModal";
 import Modal from "./components/Modal";
 import { activateOnKey } from "./utils/keyboard";
+import { copyText } from "./utils/clipboard";
 
 const LIST_COLORS = ["#ff3b30", "#ff9500", "#ffcc00", "#34c759", "#00c7be", "#007aff", "#5856d6", "#af52de"];
 
@@ -82,6 +86,8 @@ function App() {
   const [checkedDevices, setCheckedDevices] = useState<Set<string>>(new Set());
   const [showSettings, setShowSettings] = useState(false);
   const [wipeConfirm, setWipeConfirm] = useState<{ targets: DeviceInfo[]; input: string } | null>(null);
+  // A Mac's unlock PIN after Lock: undefined while Intune is still generating it, null if it never arrived
+  const [lockPin, setLockPin] = useState<{ deviceName: string; pin: string | null | undefined } | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [exportScope, setExportScope] = useState<ExportScope | null>(null);
   /** List offered as an export scope — the right-clicked one, else the active one */
@@ -297,6 +303,43 @@ function App() {
     }
   };
 
+  const handleLock = async (device: DeviceInfo) => {
+    const mac = normalizeOs(device.operatingSystem) === "macOS";
+    const note = mac ? " Intune will generate a 6-digit PIN that is needed to unlock it." : "";
+    if (!(await confirm(`Lock ${device.deviceName}?${note}`))) return;
+    try {
+      await invoke("lock_device", { deviceId: device.id });
+      showToast(`Lock sent to ${device.deviceName}`, "success");
+    } catch (e) {
+      showToast(`Lock failed: ${e}`, "error");
+      return;
+    }
+    if (!mac) return;
+    // Intune generates the PIN when it takes the command, so it can lag a few seconds
+    setLockPin({ deviceName: device.deviceName, pin: undefined });
+    for (const wait of [1500, 3000, 5000, 10000]) {
+      await new Promise((r) => setTimeout(r, wait));
+      try {
+        const pin = await invoke<string | null>("get_lock_pin", { deviceId: device.id });
+        if (pin) {
+          setLockPin((cur) => (cur?.deviceName === device.deviceName ? { ...cur, pin } : cur));
+          return;
+        }
+      } catch { /* keep trying; the portal still shows it */ }
+    }
+    setLockPin((cur) => (cur?.deviceName === device.deviceName ? { ...cur, pin: null } : cur));
+  };
+
+  const handleRemovePasscode = async (device: DeviceInfo) => {
+    if (!(await confirm(`Remove the passcode from ${device.deviceName}? Anyone holding it can open it until a new passcode is set.`))) return;
+    try {
+      await invoke("remove_passcode", { deviceId: device.id });
+      showToast(`Remove passcode sent to ${device.deviceName}`, "success");
+    } catch (e) {
+      showToast(`Remove passcode failed: ${e}`, "error");
+    }
+  };
+
   // ── Wipe (factory reset) ──
   const wipePhrase = (count: number) =>
     `I really want to wipe ${count} device${count === 1 ? "" : "s"}`;
@@ -316,7 +359,7 @@ function App() {
     if (targets.length === 1) {
       showToast(`Wiping ${targets[0].deviceName}…`, "info");
       try {
-        await invoke("wipe_device", { deviceId: targets[0].id });
+        await invoke("wipe_device", { deviceId: targets[0].id, apple: isApple(targets[0]) });
         showToast(`Wipe initiated for ${targets[0].deviceName}`, "success");
       } catch (e) {
         showToast(`Wipe failed: ${e}`, "error");
@@ -328,7 +371,7 @@ function App() {
     for (let i = 0; i < targets.length; i++) {
       updateProgress("Wiping", i + 1, targets.length);
       try {
-        await invoke("wipe_device", { deviceId: targets[i].id });
+        await invoke("wipe_device", { deviceId: targets[i].id, apple: isApple(targets[i]) });
         ok++;
       } catch {
         fail++;
@@ -796,18 +839,18 @@ function App() {
     [sortedFolders, expandedFolders, listsInFolder, rootLists]
   );
 
-  const getListWindowsDevices = (listId: string): DeviceInfo[] => {
+  const getListCommandDevices = (listId: string): DeviceInfo[] => {
     const list = deviceLists.find((l) => l.id === listId);
     if (!list) return [];
     const idSet = new Set(list.deviceIds);
-    return devices.filter((d) => idSet.has(d.id) && isWindows(d));
+    return devices.filter((d) => idSet.has(d.id) && takesCommands(d));
   };
 
-  /** The Windows devices a right-clicked list or folder acts on, named for its prompts */
+  /** The Windows and Apple devices a right-clicked list or folder acts on, named for its prompts */
   const listTargets = (listId: string): BulkTargets => ({
     name: deviceLists.find((l) => l.id === listId)?.name,
     kind: "list",
-    devices: getListWindowsDevices(listId),
+    devices: getListCommandDevices(listId),
   });
 
   const folderTargets = (folderId: string): BulkTargets => {
@@ -816,20 +859,20 @@ function App() {
     return {
       name: listFolders.find((f) => f.id === folderId)?.name,
       kind: "folder",
-      devices: devices.filter((d) => ids.has(d.id) && isWindows(d)),
+      devices: devices.filter((d) => ids.has(d.id) && takesCommands(d)),
     };
   };
 
-  const noWindowsDevices = ({ kind, devices: targets }: BulkTargets) => {
+  const noCommandDevices = ({ kind, devices: targets }: BulkTargets) => {
     if (targets.length > 0) return false;
-    showToast(`No Windows devices in this ${kind}`, "error");
+    showToast(`No Windows or Apple devices in this ${kind}`, "error");
     return true;
   };
 
   const handleTargetsSync = async (group: BulkTargets) => {
-    if (noWindowsDevices(group)) return;
+    if (noCommandDevices(group)) return;
     const targets = group.devices;
-    if (!(await confirm(`Sync ${targets.length} Windows device(s) in "${group.name}"?`))) return;
+    if (!(await confirm(`Sync ${targets.length} device(s) in "${group.name}"?`))) return;
     if (!(await confirmLargeBatch(targets.length, "sync"))) return;
     let ok = 0, fail = 0;
     for (let i = 0; i < targets.length; i++) {
@@ -843,9 +886,9 @@ function App() {
   };
 
   const handleTargetsRestart = async (group: BulkTargets) => {
-    if (noWindowsDevices(group)) return;
+    if (noCommandDevices(group)) return;
     const targets = group.devices;
-    if (!(await confirm(`Restart ${targets.length} Windows device(s) in "${group.name}"? This cannot be undone.`))) return;
+    if (!(await confirm(`Restart ${targets.length} device(s) in "${group.name}"? This cannot be undone.`))) return;
     if (!(await confirmLargeBatch(targets.length, "restart"))) return;
     let ok = 0, fail = 0;
     for (let i = 0; i < targets.length; i++) {
@@ -859,14 +902,18 @@ function App() {
   };
 
   const handleTargetsWipe = (group: BulkTargets) => {
-    if (noWindowsDevices(group)) return;
+    if (noCommandDevices(group)) return;
     promptWipe(group.devices);
   };
 
   const handleTargetsRemediation = (group: BulkTargets) => {
-    if (noWindowsDevices(group)) return;
+    const windows = group.devices.filter(isWindows);
+    if (windows.length === 0) {
+      showToast(`No Windows devices in this ${group.kind}`, "error");
+      return;
+    }
     // Check all its Windows devices, then open remediation
-    setCheckedDevices(new Set(group.devices.map((d) => d.id)));
+    setCheckedDevices(new Set(windows.map((d) => d.id)));
     openRemediationModal();
   };
 
@@ -920,18 +967,10 @@ function App() {
     setIsAuthenticated(false);
     setDevices([]);
     setSelectedDevice(null);
+    clearDeviceAppsCache();
     if (!saveSecret) setClientSecret("");
     setCheckedDevices(new Set());
   };
-
-  const toggleChecked = useCallback((deviceId: string) => {
-    setCheckedDevices((prev) => {
-      const next = new Set(prev);
-      if (next.has(deviceId)) next.delete(deviceId);
-      else next.add(deviceId);
-      return next;
-    });
-  }, []);
 
   /** While viewing lists, checks outlive an action so the bar stays up for the next one */
   const endBulkAction = () => {
@@ -971,6 +1010,12 @@ function App() {
     [checkedList]
   );
 
+  /** Windows and Apple: what sync, restart and wipe act on */
+  const checkedCommandDevices = useMemo(
+    () => checkedList.filter((d) => takesCommands(d)),
+    [checkedList]
+  );
+
   const LARGE_BATCH_THRESHOLD = 100;
 
   const confirmLargeBatch = async (count: number, action: string): Promise<boolean> => {
@@ -984,9 +1029,9 @@ function App() {
   };
 
   const handleBulkSync = async () => {
-    const targets = checkedWindowsDevices;
+    const targets = checkedCommandDevices;
     if (targets.length === 0) return;
-    if (!(await confirm(`Sync ${targets.length} Windows device(s)?`))) return;
+    if (!(await confirm(`Sync ${targets.length} device(s)?`))) return;
     if (!(await confirmLargeBatch(targets.length, "sync"))) return;
     let ok = 0, fail = 0;
     for (let i = 0; i < targets.length; i++) {
@@ -1003,9 +1048,9 @@ function App() {
   };
 
   const handleBulkRestart = async () => {
-    const targets = checkedWindowsDevices;
+    const targets = checkedCommandDevices;
     if (targets.length === 0) return;
-    if (!(await confirm(`Restart ${targets.length} Windows device(s)? This cannot be undone.`))) return;
+    if (!(await confirm(`Restart ${targets.length} device(s)? This cannot be undone.`))) return;
     if (!(await confirmLargeBatch(targets.length, "restart"))) return;
     let ok = 0, fail = 0;
     for (let i = 0; i < targets.length; i++) {
@@ -1022,7 +1067,7 @@ function App() {
   };
 
   const handleBulkWipe = () => {
-    promptWipe(checkedWindowsDevices);
+    promptWipe(checkedCommandDevices);
   };
 
   const handleBulkRemediation = () => {
@@ -1167,6 +1212,50 @@ function App() {
     });
     return sorted;
   }, [sortedDevices]);
+
+  // ── Device selection ──
+  // Works like list selection. Opening a device is the single selection; checks are the
+  // multiple one, and a modifier click turns the open device into the first check.
+
+  const deviceSelectAnchor = useRef<string | null>(null);
+  // Read through a ref so the click handler stays stable and DeviceItem's memo holds
+  const deviceClickState = useRef({ visibleIds: [] as string[], missingIds: new Set<string>(), openId: null as string | null });
+  deviceClickState.current = {
+    visibleIds: groupedDevices.flatMap(([ou, ds]) => (expandedGroups.has(ou) ? ds.map((d) => d.id) : [])),
+    missingIds: new Set(sortedDevices.filter((d) => d.deviceName.startsWith("[Not found]")).map((d) => d.id)),
+    openId: selectedDevice?.id ?? null,
+  };
+
+  /** Plain click opens only this device; shift checks a range; checkbox or cmd/ctrl toggles its check */
+  const clickDevice = useCallback(
+    (device: DeviceInfo, e: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }, toggle: boolean) => {
+      const { visibleIds, missingIds, openId } = deviceClickState.current;
+      const anchor = deviceSelectAnchor.current ?? openId;
+      const range = e.shiftKey && anchor
+        ? idsBetween(visibleIds, anchor, device.id).filter((id) => !missingIds.has(id))
+        : [];
+      if (range.length > 0) {
+        deviceSelectAnchor.current = anchor;
+        setCheckedDevices((prev) => new Set([...prev, ...range]));
+        return;
+      }
+      deviceSelectAnchor.current = device.id;
+      if (toggle || e.metaKey || e.ctrlKey) {
+        setCheckedDevices((prev) => {
+          const next = new Set(prev);
+          // Cmd/ctrl-click adds to what is selected, and the open device is selected
+          if (!toggle && next.size === 0 && openId && openId !== device.id && !missingIds.has(openId)) next.add(openId);
+          if (next.has(device.id)) next.delete(device.id);
+          else next.add(device.id);
+          return next;
+        });
+        return;
+      }
+      setCheckedDevices(new Set());
+      handleSelectDevice(device);
+    },
+    [handleSelectDevice]
+  );
 
   const toggleGroup = (ou: string) => {
     setExpandedGroups((prev) => {
@@ -1408,13 +1497,26 @@ function App() {
             </button>
           </div>
           {activeView === "devices" && (
-            <button
-              className="btn-secondary btn-small"
-              onClick={() => loadDevices()}
-              disabled={loading}
-            >
-              {loading ? <><span className="spinner" />Refreshing…</> : "Refresh"}
-            </button>
+            <div className="refresh-group">
+              <button
+                className="btn-secondary btn-small"
+                onClick={() => loadDevices()}
+                disabled={loading}
+              >
+                {loading ? <><span className="spinner" />Refreshing…</> : "Refresh"}
+              </button>
+              <select
+                className="refresh-interval"
+                aria-label="Refresh devices automatically"
+                title="Refresh devices automatically. Pauses while the app is hidden."
+                value={autoRefreshMinutes}
+                onChange={(e) => setAutoRefreshMinutes(Number(e.target.value))}
+              >
+                {AUTO_REFRESH_OPTIONS.map((m) => (
+                  <option key={m} value={m}>{m === 0 ? "Auto off" : m === 60 ? "Every hour" : `Every ${m} min`}</option>
+                ))}
+              </select>
+            </div>
           )}
           <button
             className="btn-secondary btn-small btn-icon"
@@ -1688,8 +1790,7 @@ function App() {
                       isSelected={selectedDevice?.id === device.id}
                       isChecked={checkedDevices.has(device.id)}
                       listTags={deviceListMemberships[device.id]}
-                      onSelect={handleSelectDevice}
-                      onToggleCheck={toggleChecked}
+                      onClick={clickDevice}
                     />
                   ))}
               </div>
@@ -1712,9 +1813,9 @@ function App() {
                 </button>
                 <span className="bulk-info">
                   {checkedDevices.size} selected
-                  {checkedWindowsDevices.length < checkedDevices.size && (
-                    <span className="bulk-note">
-                      {checkedWindowsDevices.length} Windows
+                  {checkedCommandDevices.length < checkedDevices.size && (
+                    <span className="bulk-note" title="Only Windows and Apple devices take commands">
+                      {checkedCommandDevices.length} can take commands
                     </span>
                   )}
                 </span>
@@ -1797,7 +1898,7 @@ function App() {
                   title="Send a sync command to the selected devices"
                   aria-label="Sync"
                   onClick={handleBulkSync}
-                  disabled={checkedWindowsDevices.length === 0}
+                  disabled={checkedCommandDevices.length === 0}
                 >
                   <Icon path={mdiSync} size={0.65} />
                   <span>Sync</span>
@@ -1807,14 +1908,14 @@ function App() {
                   title="Restart the selected devices"
                   aria-label="Restart"
                   onClick={handleBulkRestart}
-                  disabled={checkedWindowsDevices.length === 0}
+                  disabled={checkedCommandDevices.length === 0}
                 >
                   <Icon path={mdiRestart} size={0.65} />
                   <span>Restart</span>
                 </button>
                 <button
                   className="bulk-btn"
-                  title="Run a remediation script on the selected devices"
+                  title="Run a remediation script on the selected Windows devices"
                   aria-label="Run remediation"
                   onClick={handleBulkRemediation}
                   disabled={checkedWindowsDevices.length === 0}
@@ -1825,7 +1926,7 @@ function App() {
                 <button
                   className="bulk-btn bulk-btn-danger"
                   onClick={handleBulkWipe}
-                  disabled={checkedWindowsDevices.length === 0}
+                  disabled={checkedCommandDevices.length === 0}
                 >
                   <Icon path={mdiCellphoneRemove} size={0.65} />
                   <span>Wipe</span>
@@ -1870,10 +1971,48 @@ function App() {
                     <span>Wipe</span>
                   </button>
                 </div>
+              ) : isApple(selectedDevice) ? (
+                <div className="action-toolbar" role="group" aria-label="Device commands">
+                  <button className="toolbar-btn" onClick={() => handleSync(selectedDevice)}>
+                    <Icon path={mdiSync} size={0.65} />
+                    <span>Sync</span>
+                  </button>
+                  <div className="toolbar-divider" />
+                  <button
+                    className="toolbar-btn"
+                    onClick={() => handleRestart(selectedDevice)}
+                    title={normalizeOs(selectedDevice.operatingSystem) === "iOS" ? "Supervised iPhones and iPads only" : undefined}
+                  >
+                    <Icon path={mdiRestart} size={0.65} />
+                    <span>Restart</span>
+                  </button>
+                  <div className="toolbar-divider" />
+                  <button className="toolbar-btn" onClick={() => handleLock(selectedDevice)}>
+                    <Icon path={mdiLock} size={0.65} />
+                    <span>Lock</span>
+                  </button>
+                  {normalizeOs(selectedDevice.operatingSystem) === "iOS" && (
+                    <>
+                      <div className="toolbar-divider" />
+                      <button className="toolbar-btn" onClick={() => handleRemovePasscode(selectedDevice)}>
+                        <Icon path={mdiLockOpenVariant} size={0.65} />
+                        <span>Remove passcode</span>
+                      </button>
+                    </>
+                  )}
+                  <div className="toolbar-divider" />
+                  <button
+                    className="toolbar-btn toolbar-btn-danger"
+                    onClick={() => promptWipe([selectedDevice])}
+                  >
+                    <Icon path={mdiCellphoneRemove} size={0.65} />
+                    <span>Wipe</span>
+                  </button>
+                </div>
               ) : (
                 <div className="action-toolbar action-toolbar-disabled">
                   <span className="actions-unavailable">
-                    Actions are only available for Windows devices
+                    Actions are only available for Windows and Apple devices
                   </span>
                 </div>
               )}
@@ -1919,6 +2058,9 @@ function App() {
                     {formatManagementState(selectedDevice.managementState)}
                   </span>
                 </div>
+                {!selectedDevice.deviceName.startsWith("[Not found]") && (
+                  <DeviceApps device={selectedDevice} />
+                )}
               </div>
             </div>
           ) : (
@@ -2043,6 +2185,36 @@ function App() {
         </Modal>
       )}
 
+      {lockPin && (
+        <Modal onClose={() => setLockPin(null)}>
+          <h3>Unlock PIN for {lockPin.deviceName}</h3>
+          {lockPin.pin === undefined ? (
+            <p><span className="spinner" />Waiting for Intune to generate the PIN…</p>
+          ) : lockPin.pin === null ? (
+            <p>
+              Intune hasn't returned the PIN yet. It appears on the device's Overview page in the
+              Intune portal once the Mac takes the lock.
+            </p>
+          ) : (
+            <>
+              <p>The Mac asks for this PIN when it starts up. It is also shown on the device's Overview page in the Intune portal.</p>
+              <p className="lock-pin">{lockPin.pin}</p>
+            </>
+          )}
+          <div className="modal-actions">
+            {lockPin.pin && (
+              <button
+                className="btn-secondary"
+                onClick={() => copyText(lockPin.pin!).then(() => showToast("PIN copied", "success"), () => showToast("Couldn't copy the PIN", "error"))}
+              >
+                Copy PIN
+              </button>
+            )}
+            <button className="btn-primary" onClick={() => setLockPin(null)} autoFocus>Done</button>
+          </div>
+        </Modal>
+      )}
+
       {/* Remediation modal */}
       {showRemediation && (
         <Modal onClose={() => setShowRemediation(false)}>
@@ -2146,27 +2318,6 @@ function App() {
             </div>
 
             <div className="settings-section">
-              <h4>Device list</h4>
-              <p className="settings-hint">
-                Reload devices from Intune on a timer. It pauses while the app is hidden.
-                The App installs tab checks its own app every 3 minutes while it is open.
-              </p>
-              <div className="settings-update-row">
-                <label htmlFor="auto-refresh">Refresh devices automatically</label>
-                <select
-                  id="auto-refresh"
-                  className="io-select"
-                  value={autoRefreshMinutes}
-                  onChange={(e) => setAutoRefreshMinutes(Number(e.target.value))}
-                >
-                  {AUTO_REFRESH_OPTIONS.map((m) => (
-                    <option key={m} value={m}>{m === 0 ? "Off" : m === 60 ? "Every hour" : `Every ${m} minutes`}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="settings-section">
               <h4>Updates</h4>
               <p className="settings-hint">
                 Updates are downloaded from GitHub Releases and verified before they are
@@ -2232,14 +2383,14 @@ function App() {
                 onClick={() => { handleTargetsSync(folderTargets(folderId)); close(); }}
               >
                 <Icon path={mdiSync} size={0.6} />
-                Sync all Windows devices
+                Sync all devices
               </button>
               <button
                 className="context-menu-item"
                 onClick={() => { handleTargetsRestart(folderTargets(folderId)); close(); }}
               >
                 <Icon path={mdiRestart} size={0.6} />
-                Restart all Windows devices
+                Restart all devices
               </button>
               <button
                 className="context-menu-item"
@@ -2253,7 +2404,7 @@ function App() {
                 onClick={() => { handleTargetsWipe(folderTargets(folderId)); close(); }}
               >
                 <Icon path={mdiCellphoneRemove} size={0.6} />
-                Wipe all Windows devices
+                Wipe all devices
               </button>
               <div className="context-menu-separator" />
               <button
@@ -2310,14 +2461,14 @@ function App() {
               onClick={() => { handleTargetsSync(listTargets(listContextMenu.listId)); setListContextMenu(null); }}
             >
               <Icon path={mdiSync} size={0.6} />
-              Sync all Windows devices
+              Sync all devices
             </button>
             <button
               className="context-menu-item"
               onClick={() => { handleTargetsRestart(listTargets(listContextMenu.listId)); setListContextMenu(null); }}
             >
               <Icon path={mdiRestart} size={0.6} />
-              Restart all Windows devices
+              Restart all devices
             </button>
             <button
               className="context-menu-item"
@@ -2331,7 +2482,7 @@ function App() {
               onClick={() => { handleTargetsWipe(listTargets(listContextMenu.listId)); setListContextMenu(null); }}
             >
               <Icon path={mdiCellphoneRemove} size={0.6} />
-              Wipe all Windows devices
+              Wipe all devices
             </button>
             <div className="context-menu-separator" />
             <button

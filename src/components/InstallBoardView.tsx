@@ -19,6 +19,14 @@ import {
 } from "../utils/installBoard";
 
 const REFRESH_MS = 180_000;
+// A cart is 32 laptops; lists bigger than this fill the row instead of a narrow 8-wide card
+const WIDE_LIST_AFTER = 48;
+
+/** Open the hover label leftwards on the right half of the window, wherever the square sits */
+const placeTip = (e: React.SyntheticEvent<HTMLElement>) => {
+  const { left, width } = e.currentTarget.getBoundingClientRect();
+  e.currentTarget.dataset.tip = left + width / 2 > window.innerWidth / 2 ? "left" : "right";
+};
 
 /** An icon, not a "×" character: a glyph sits on the font's baseline and drifts off centre */
 const FailedMark = () => <Icon path={mdiClose} className="board-failed-mark" />;
@@ -300,7 +308,7 @@ function InstallBoardView({ isActive, devices, deviceLists, onOpenDevice }: Inst
 
           <div className="board-lists">
             {board.map((list) => (
-              <div key={list.id} className="board-list">
+              <div key={list.id} className={`board-list${list.rows.length > WIDE_LIST_AFTER ? " board-list-wide" : ""}`}>
                 <button
                   className="board-list-header"
                   aria-pressed={activeListFilter === list.id}
@@ -319,6 +327,8 @@ function InstallBoardView({ isActive, devices, deviceLists, onOpenDevice }: Inst
                         className={`board-square board-${r.state}`}
                         aria-label={`${info}. Open device`}
                         onClick={() => r.deviceId && onOpenDevice(r.deviceId)}
+                        onMouseEnter={placeTip}
+                        onFocus={placeTip}
                       >
                         {r.state === "failed" && <FailedMark />}
                         <span className="board-tip" aria-hidden="true">

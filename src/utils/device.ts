@@ -22,6 +22,12 @@ export const normalizeOs = (os: string | null): string => {
 /** Check if a device is Windows */
 export const isWindows = (device: DeviceInfo) => normalizeOs(device.operatingSystem) === "Windows";
 
+/** Macs, iPhones and iPads */
+export const isApple = (device: DeviceInfo) => ["macOS", "iOS"].includes(normalizeOs(device.operatingSystem));
+
+/** Sync, restart and wipe are offered for these; remediation stays Windows-only */
+export const takesCommands = (device: DeviceInfo) => isWindows(device) || isApple(device);
+
 /** Get the MDI icon path for a device's OS */
 export const getOsIcon = (os: string | null): string => {
   const normalized = normalizeOs(os);

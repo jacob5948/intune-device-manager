@@ -1,4 +1,4 @@
-import type { AppInstallStatus, DeviceInfo, DeviceList } from "../types";
+import type { AppInstallStatus, DeviceAppState, DeviceInfo, DeviceList } from "../types";
 
 export type BoardState = "noStatus" | "installing" | "installed" | "failed";
 
@@ -244,3 +244,24 @@ export const sortBoardRowsBy = (rows: BoardRow[], key: BoardSortKey, direction: 
     return sign * cmp || byName(a, b);
   });
 };
+
+const INTENT_LABELS: Record<string, string> = {
+  requiredInstall: "Required",
+  available: "Available",
+  availableInstallWithoutEnrollment: "Available",
+  requiredUninstall: "Uninstall",
+  requiredAndAvailableInstall: "Required",
+  notAvailable: "Not available",
+};
+
+/** "Required" is the norm, so only the other intents are worth saying */
+export const intentLabel = (intent: string | null): string | null =>
+  !intent || intent === "requiredInstall" ? null : INTENT_LABELS[intent] ?? intent;
+
+/** A device's apps: failures first, then installing, unreported, installed; by name within each */
+export const sortDeviceApps = (apps: DeviceAppState[]): DeviceAppState[] =>
+  [...apps].sort(
+    (a, b) =>
+      STATE_ORDER[normalizeInstallState(a.installState)] - STATE_ORDER[normalizeInstallState(b.installState)] ||
+      a.appName.localeCompare(b.appName, undefined, { numeric: true }),
+  );
