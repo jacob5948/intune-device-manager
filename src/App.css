@@ -6,9 +6,27 @@
   color: #1d1d1f;
   background-color: #f5f5f7;
   -webkit-font-smoothing: antialiased;
-  --text-secondary: #6e6e73;
+  --text-secondary: #636366;
   --focus-ring: #0071e3;
+  /* Red text and white-on-colour fills, each measured at 4.5:1 or better */
+  --danger-text: #d70015;
+  --danger-solid: #d70015;
+  --danger-solid-hover: #b80012;
+  --success-solid: #1f7a35;
+  /* Bulk bar: a tinted band, so selection mode reads as distinct in either scheme */
+  --bulk-bg: #e6effa;
+  --bulk-fg: #1d1d1f;
+  --bulk-label: #636366;
+  --bulk-hover: rgba(0, 0, 0, 0.06);
+  --bulk-active: rgba(0, 0, 0, 0.1);
+  --bulk-border: rgba(0, 0, 0, 0.1);
   --stale: #9a5b00;
+  --board-no-status: #8e8e93;
+  --board-installing: #0d9488;
+  --board-installed: #2e9e5b;
+  --board-failed: #d14343;
+  --board-surface: #ffffff;
+  --board-border: rgba(0, 0, 0, 0.1);
 }
 
 :focus-visible {
@@ -65,6 +83,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
   padding: 12px 20px;
   background: #fff;
   border-bottom: 1px solid #d2d2d7;
@@ -79,7 +99,15 @@
 .header-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   -webkit-app-region: no-drag;
+}
+
+/* Labels stay on one line; in a narrow window the actions wrap as whole buttons */
+.header h1,
+.header-actions button {
+  white-space: nowrap;
 }
 
 /* Login screen */
@@ -195,7 +223,7 @@ button {
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color 0.2s, color 0.2s, border-color 0.2s, box-shadow 0.2s, opacity 0.2s;
   font-family: inherit;
 }
 
@@ -223,12 +251,12 @@ button {
 }
 
 .btn-danger {
-  background: #ff3b30;
+  background: var(--danger-solid);
   color: #fff;
 }
 
 .btn-danger:hover {
-  background: #e0342b;
+  background: var(--danger-solid-hover);
 }
 
 .btn-small {
@@ -254,7 +282,7 @@ button {
   font-weight: 500;
   border: none;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -287,8 +315,9 @@ button {
   align-items: center;
   gap: 0;
   padding: 7px 16px;
-  background: #2c2c2e;
-  color: #fff;
+  background: var(--bulk-bg);
+  border-bottom: 1px solid var(--bulk-border);
+  color: var(--bulk-fg);
   font-size: 13px;
   font-weight: 500;
   overflow: visible;
@@ -309,9 +338,9 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--bulk-hover);
   border: none;
-  color: #fff;
+  color: inherit;
   cursor: pointer;
   padding: 4px;
   border-radius: 50%;
@@ -320,7 +349,7 @@ button {
 }
 
 .bulk-close:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--bulk-active);
 }
 
 .bulk-info {
@@ -342,18 +371,16 @@ button {
 
 .bulk-actions-group {
   display: flex;
-  flex: 1;
   min-width: 0;
   align-items: center;
-  gap: 0;
+  gap: 2px;
 }
 
-.bulk-divider {
-  width: 1px;
-  height: 20px;
-  background: rgba(255, 255, 255, 0.2);
-  margin: 0 4px;
-  flex-shrink: 0;
+/* Device commands follow the selection actions, set off by a divider */
+.bulk-actions-device {
+  margin-inline-start: 8px;
+  padding-inline-start: 8px;
+  border-inline-start: 1px solid var(--bulk-border);
 }
 
 .bulk-btn {
@@ -364,7 +391,7 @@ button {
   background: none;
   border: none;
   border-radius: 6px;
-  color: #fff;
+  color: inherit;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -373,11 +400,11 @@ button {
 }
 
 .bulk-btn:hover {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--bulk-hover);
 }
 
 .bulk-btn:active {
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--bulk-active);
 }
 
 .bulk-btn:disabled {
@@ -391,19 +418,25 @@ button {
 
 /* Not enough room for every label: keep one row, and Wipe stays spelled out */
 @container (max-width: 720px) {
-  .bulk-actions-group .bulk-btn span {
+  .bulk-actions-group .bulk-btn:not(.bulk-btn-danger) span {
     display: none;
   }
 }
 
 .bulk-btn-danger {
   flex-shrink: 0;
-  margin-left: auto;
-  background: #d70015;
+  margin-inline-start: 6px;
+  background: var(--danger-solid);
+  color: #fff;
 }
 
-.bulk-btn-danger:hover {
-  background: #b80012;
+.bulk-btn-danger:hover,
+.bulk-btn-danger:active {
+  background: var(--danger-solid-hover);
+}
+
+.bulk-btn-danger:disabled:hover {
+  background: var(--danger-solid);
 }
 
 /* Actions unavailable */
@@ -527,7 +560,7 @@ button {
   background: none;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 
 .lists-header-btn:hover {
@@ -545,7 +578,7 @@ button {
   font-weight: 500;
   font-family: inherit;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 
 .lists-header-text-btn:hover {
@@ -872,6 +905,28 @@ button {
   box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.3);
 }
 
+/* Custom colour: a hue wheel until one is picked, then that colour */
+.color-swatch-custom {
+  position: relative;
+  background: conic-gradient(#ff3b30, #ffcc00, #34c759, #00c7be, #007aff, #af52de, #ff3b30);
+  /* Size the wheel to the whole circle, or it tiles into the transparent border */
+  background-origin: border-box;
+}
+
+.color-swatch-custom input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.color-swatch-custom:has(input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
 .color-swatch-clear {
   background: none !important;
   border: 1.5px solid var(--text-secondary);
@@ -882,15 +937,19 @@ button {
 }
 
 .color-swatch-clear:hover {
-  border-color: #ff3b30;
-  color: #ff3b30;
+  border-color: var(--danger-text);
+  color: var(--danger-text);
 }
 
-/* Bulk bar "Add to list" dropdown: anchored to the bar, as the detail pane clips overflow */
+/* Bulk bar "Add to list" dropdown: opens down into the detail pane, under its button */
+.bulk-list-dropdown {
+  position: relative;
+}
+
 .bulk-list-menu {
   position: absolute;
   top: 100%;
-  right: 16px;
+  left: 0;
   margin-top: 4px;
   background: #fff;
   border-radius: 8px;
@@ -982,7 +1041,7 @@ button {
 }
 
 .context-menu-danger {
-  color: #ff3b30;
+  color: var(--danger-text);
 }
 
 .context-menu-danger:hover {
@@ -1099,8 +1158,8 @@ button {
 .device-os-icon,
 .device-checkbox-icon {
   position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
+  margin: auto;
 }
 
 .device-os-icon {
@@ -1216,6 +1275,19 @@ button {
   .device-list-tag {
     background: rgba(0, 0, 0, 0.06);
     color: rgba(0, 0, 0, 0.65);
+  }
+}
+
+/* A list's colour, adjusted per scheme by tagColors() so the text stays readable */
+.device-list-tag.colored {
+  background: var(--tag-bg-dark);
+  color: var(--tag-fg-dark);
+}
+
+@media (prefers-color-scheme: light) {
+  .device-list-tag.colored {
+    background: var(--tag-bg-light);
+    color: var(--tag-fg-light);
   }
 }
 
@@ -1465,7 +1537,7 @@ button {
 
 .btn-delete:hover {
   background: #fdd;
-  color: #ff3b30;
+  color: var(--danger-text);
 }
 
 .settings-empty {
@@ -1487,7 +1559,7 @@ button {
   border-radius: 8px;
   margin-bottom: 8px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 
 .script-item:hover {
@@ -1725,7 +1797,7 @@ button {
 .import-error {
   margin-top: 8px;
   font-size: 12px;
-  color: #ff3b30;
+  color: var(--danger-text);
 }
 
 .import-summary {
@@ -1964,7 +2036,7 @@ button {
 }
 
 .destructive-confirm-phrase {
-  color: #e53935;
+  color: var(--danger-text);
   font-family: monospace;
   font-size: 12px;
 }
@@ -1996,7 +2068,7 @@ button {
 
 .destructive-confirm-input:focus {
   outline: none;
-  border-color: #e53935;
+  border-color: var(--danger-text);
   box-shadow: 0 0 0 2px rgba(229, 57, 53, 0.15);
 }
 
@@ -2007,7 +2079,7 @@ button {
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  background: #e53935;
+  background: var(--danger-solid);
   color: #fff;
 }
 
@@ -2021,21 +2093,52 @@ button {
   position: fixed;
   bottom: 20px;
   right: 20px;
+  max-width: min(480px, calc(100vw - 40px));
   padding: 12px 20px;
   border-radius: 10px;
   color: #fff;
+  overflow-wrap: anywhere;
   font-size: 13px;
   font-weight: 500;
   z-index: 200;
   animation: slideIn 0.3s ease;
 }
 
+.toast-body {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.toast-dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-inline-end: -8px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.toast-dismiss:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.toast-dismiss:focus-visible {
+  outline-color: #fff;
+}
+
 .toast.success {
-  background: #34c759;
+  background: var(--success-solid);
 }
 
 .toast.error {
-  background: #ff3b30;
+  background: var(--danger-solid);
 }
 
 .toast.info {
@@ -2127,7 +2230,7 @@ button {
 
 .badge.compliant {
   background: #d1f2d9;
-  color: #1b7a2e;
+  color: #176b2b;
 }
 
 .badge.noncompliant {
@@ -2163,7 +2266,7 @@ button {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-secondary);
-  transition: all 0.15s ease;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 
 .view-switch-btn:hover {
@@ -2211,7 +2314,7 @@ button {
 .group-tag-display {
   cursor: pointer;
   border-bottom: 1px dashed transparent;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
   padding-bottom: 1px;
 }
 
@@ -2236,24 +2339,116 @@ button {
 }
 
 .toolbar-btn-danger {
-  color: #ff3b30 !important;
+  color: var(--danger-text) !important;
 }
 
 .toolbar-btn-danger:hover {
   background: rgba(255, 59, 48, 0.06) !important;
 }
 
+/* App install board */
+.install-board { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+.board-muted { color: var(--text-secondary); font-size: 12px; }
+.board-setup { display: flex; flex-direction: column; gap: 10px; background: var(--board-surface); border: 1px solid var(--board-border); border-radius: 10px; padding: 12px 14px; }
+.board-setup-row { display: flex; gap: 12px; align-items: flex-start; }
+.board-setup-label { width: 40px; flex: none; font-weight: 600; line-height: 26px; }
+.board-chosen-app { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.board-app-picker { flex: 1; max-width: 460px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.board-app-picker input { width: 100%; padding: 5px 9px; border: 1px solid var(--board-border); border-radius: 6px; background: transparent; color: inherit; font: inherit; }
+.board-app-results { list-style: none; margin: 0; padding: 0; width: 100%; max-height: 180px; overflow-y: auto; border: 1px solid var(--board-border); border-radius: 6px; }
+.board-app-results button { all: unset; box-sizing: border-box; display: flex; justify-content: space-between; gap: 10px; width: 100%; padding: 5px 9px; cursor: pointer; }
+.board-app-results button:hover { background: var(--board-border); }
+.board-app-results button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.board-no-match { padding: 5px 9px; }
+.board-list-choices { display: flex; flex-wrap: wrap; gap: 4px 14px; line-height: 26px; }
+.board-list-choice { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.board-status-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.board-legend { display: flex; gap: 4px; flex-wrap: wrap; }
+.board-legend-item, .board-list-header { all: unset; display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
+.board-legend-item:hover, .board-list-header:hover { background: var(--board-border); }
+.board-legend-item:focus-visible, .board-list-header:focus-visible { outline: 2px solid var(--focus-ring); }
+.board-legend-item[aria-pressed="true"], .board-list-header[aria-pressed="true"] { border-color: currentColor; }
+.board-refresh { display: flex; align-items: center; gap: 10px; }
+.board-notify { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.board-error { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--board-failed); }
+.board-lists { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.board-list { background: var(--board-surface); border: 1px solid var(--board-border); border-radius: 10px; padding: 8px 10px 12px; }
+.board-list-header { margin: 0 0 6px -2px; }
+.board-squares { display: grid; grid-template-columns: repeat(8, 28px); gap: 4px; }
+/* Hover label: a real element rather than a title, which is slow and which the
+   macOS webview may not show at all. Shown on keyboard focus too. */
+.board-squares .board-square { position: relative; border: none; padding: 0; cursor: pointer; font: inherit; }
+.board-squares .board-square:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.board-tip {
+  display: none; position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 10;
+  flex-direction: column; align-items: flex-start; white-space: nowrap; text-align: left;
+  padding: 4px 8px; border-radius: 6px; pointer-events: none;
+  background: #1d1d1f; color: #f5f5f7; border: 1px solid var(--board-border);
+  font-size: 12px; font-weight: 400; line-height: 1.4;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.board-tip strong { font-weight: 700; }
+.board-square:hover .board-tip, .board-square:focus-visible .board-tip { display: flex; }
+/* Right half of each row opens leftwards so the label stays inside the card */
+.board-squares .board-square:nth-child(8n+5) .board-tip,
+.board-squares .board-square:nth-child(8n+6) .board-tip,
+.board-squares .board-square:nth-child(8n+7) .board-tip,
+.board-squares .board-square:nth-child(8n) .board-tip { left: auto; right: 0; }
+.board-square { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px; height: 28px; border-radius: 5px; color: #fff; }
+.board-legend .board-square, .board-small { width: 14px; height: 14px; border-radius: 3px; }
+.board-failed-mark { display: block; width: 60%; height: 60%; }
+.board-noStatus { background: var(--board-no-status); }
+.board-installing { background: var(--board-installing); }
+.board-installed { background: var(--board-installed); }
+.board-failed { background: var(--board-failed); }
+.board-state { display: inline-flex; align-items: center; gap: 6px; }
+.board-table { width: 100%; border-collapse: collapse; background: var(--board-surface); border-radius: 10px; overflow: hidden; }
+.board-table th, .board-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--board-border); }
+.board-table th { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.board-sort { all: unset; display: inline-flex; align-items: center; gap: 2px; cursor: pointer; }
+.board-sort:hover { color: inherit; }
+.board-sort:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 3px; }
+.board-sort-icon { width: 14px; height: 14px; opacity: 0; }
+.board-sort-icon.active { opacity: 1; }
+.board-sort:hover .board-sort-icon:not(.active) { opacity: 0.4; }
+.board-device-link { all: unset; cursor: pointer; }
+.board-device-link:hover { text-decoration: underline; }
+.board-device-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 3px; }
+
 /* Dark mode */
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f5f5f7;
     background-color: #1d1d1f;
-    --text-secondary: #a1a1a6;
+    --text-secondary: #aeaeb2;
     --focus-ring: #5ac8fa;
+    --danger-text: #ff6961;
+    --bulk-bg: #3a3a3c;
+    --bulk-fg: #fff;
+    --bulk-label: #aeaeb2;
+    --bulk-hover: rgba(255, 255, 255, 0.15);
+    --bulk-active: rgba(255, 255, 255, 0.25);
+    --bulk-border: rgba(255, 255, 255, 0.12);
     --stale: #ffcc66;
+    --board-no-status: #636366;
+    --board-installing: #2dd4bf;
+    --board-installed: #34c759;
+    --board-failed: #ff6961;
+    --board-surface: #2c2c2e;
+    --board-border: rgba(255, 255, 255, 0.12);
   }
 
-  .bulk-bar {
+  .badge.compliant {
+    background: #1e3a26;
+    color: #6fdc8c;
+  }
+
+  .badge.noncompliant {
+    background: #4a1f1f;
+    color: #ff8a80;
+  }
+
+  .badge.unknown {
     background: #3a3a3c;
   }
 
@@ -2376,7 +2571,7 @@ button {
   }
 
   .destructive-confirm-input:focus {
-    border-color: #e53935;
+    border-color: var(--danger-text);
   }
 
   .script-item {
@@ -2673,10 +2868,6 @@ button {
     background: rgba(255, 255, 255, 0.08);
     border-color: #0a84ff;
     color: #f5f5f7;
-  }
-
-  .toolbar-btn-danger {
-    color: #ff453a !important;
   }
 
   .toolbar-btn-danger:hover {

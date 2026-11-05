@@ -26,6 +26,9 @@ pub enum AppError {
     #[error("Not authenticated. Please sign in.")]
     NotAuthenticated,
 
+    #[error("This app registration needs the DeviceManagementApps.Read.All application permission with admin consent. Ask your Entra admin to add it, then sign out and back in.")]
+    MissingPermission,
+
     #[error("Invalid input: {0}")]
     Validation(String),
 
@@ -140,6 +143,100 @@ struct TokenResponse {
     error_description: Option<String>,
 }
 
+/// Intune app, as offered by the install board's picker
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MobileAppSummary {
+    pub id: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub publisher: Option<String>,
+}
+
+/// One row of Intune's per-device install report for an app
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AppInstallStatus {
+    pub device_id: Option<String>,
+    pub device_name: Option<String>,
+    pub install_state: Option<String>,
+    pub state_detail: Option<String>,
+    pub error_code: Option<String>,
+    pub last_reported: Option<String>,
+    pub app_version: Option<String>,
+}
+
+#[derive(Debug)]
+struct InstallReportPage {
+    total: usize,
+    rows: Vec<AppInstallStatus>,
+}
+
+/// The report returns `Values` as positional rows against `Schema`, so look
+/// columns up by name: the order is not part of any documented contract.
+fn parse_install_report(body: &serde_json::Value) -> Result<InstallReportPage, AppError> {
+    let schema = body["Schema"]
+        .as_array()
+        .ok_or_else(|| AppError::Graph(format!("Unexpected install report: {}", body)))?;
+    let index = |name: &str| schema.iter().position(|c| c["Column"] == name);
+    let columns = [
+        "DeviceId",
+        "DeviceName",
+        "AppInstallState_loc",
+        "AppInstallStateDetails_loc",
+        "HexErrorCode",
+        "LastModifiedDateTime",
+        "AppVersion",
+    ]
+    .map(index);
+
+    let rows = body["Values"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .map(|row| {
+            let cell = |i: Option<usize>| -> Option<String> {
+                let value = &row[i?];
+                let text = match value {
+                    serde_json::Value::Null => return None,
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                (!text.is_empty()).then_some(text)
+            };
+            AppInstallStatus {
+                device_id: cell(columns[0]),
+                device_name: cell(columns[1]),
+                install_state: cell(columns[2]),
+                state_detail: cell(columns[3]),
+                error_code: cell(columns[4]),
+                last_reported: cell(columns[5]).map(assume_utc),
+                app_version: cell(columns[6]),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let total = body["TotalRowCount"].as_u64().map_or(rows.len(), |n| n as usize);
+    Ok(InstallReportPage { total, rows })
+}
+
+/// Report times carry no offset; they are UTC, and the webview would read them as local time
+fn assume_utc(time: String) -> String {
+    let has_offset = time.ends_with('Z')
+        || time.rfind(['+', '-']).is_some_and(|i| i > time.find('T').unwrap_or(usize::MAX));
+    if has_offset { time } else { time + "Z" }
+}
+
+/// A 403 here means the app permission is missing; anything else is passed through
+fn graph_error(status: reqwest::StatusCode, body: String) -> AppError {
+    if status == reqwest::StatusCode::FORBIDDEN {
+        AppError::MissingPermission
+    } else {
+        AppError::Graph(body)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct GraphListResponse<T> {
     value: Vec<T>,
@@ -230,6 +327,15 @@ pub async fn acquire_token(
 }
 
 /// Validates that an ID string is safe for URL interpolation
+/// The app id goes into an OData filter string, so a quote must never reach it
+fn validate_app_id(id: &str) -> Result<(), AppError> {
+    validate_id(id, "app_id")?;
+    if id.contains('\'') {
+        return Err(AppError::Validation("Invalid app_id: contains forbidden characters".to_string()));
+    }
+    Ok(())
+}
+
 fn validate_id(id: &str, label: &str) -> Result<(), AppError> {
     if id.is_empty() {
         return Err(AppError::Validation(format!("{} cannot be empty", label)));
@@ -431,6 +537,64 @@ impl<'a> GraphClient<'a> {
         Ok(())
     }
 
+    /// Kept apart from `get_all_pages`: its callers need other permissions, so
+    /// mapping their 403s to the app-permission message would mislead
+    pub async fn get_mobile_apps(&self) -> Result<Vec<MobileAppSummary>, AppError> {
+        let mut apps = Vec::new();
+        let mut next_url = Some(format!(
+            "{}/deviceAppManagement/mobileApps?$select=id,displayName,publisher",
+            GRAPH_BETA
+        ));
+        while let Some(url) = next_url.take() {
+            let resp = self.request_with_retry(|| {
+                self.client.get(&url).bearer_auth(&self.access_token)
+            }).await?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(graph_error(status, resp.text().await.unwrap_or_default()));
+            }
+            let page: GraphListResponse<MobileAppSummary> = resp.json().await?;
+            apps.extend(page.value);
+            next_url = page.next_link;
+        }
+        Ok(apps)
+    }
+
+    /// One report query per app, paged; never one request per device
+    pub async fn get_app_install_statuses(&self, app_id: &str) -> Result<Vec<AppInstallStatus>, AppError> {
+        validate_app_id(app_id)?;
+        let url = format!(
+            "{}/reports/microsoft.graph.retrieveDeviceAppInstallationStatusReport",
+            GRAPH_BASE
+        );
+        let mut rows = Vec::new();
+        loop {
+            let body = serde_json::json!({
+                "select": ["DeviceName", "DeviceId", "AppVersion", "AppInstallState",
+                           "AppInstallStateDetails", "HexErrorCode", "LastModifiedDateTime"],
+                "filter": format!("(ApplicationId eq '{}')", app_id),
+                "skip": rows.len(),
+                "top": 500,
+                "orderBy": [],
+            });
+            let resp = self.request_with_retry(|| {
+                self.client.post(&url).bearer_auth(&self.access_token).json(&body)
+            }).await?;
+            let status = resp.status();
+            // Sent as application/octet-stream, so read text rather than .json()
+            let text = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                return Err(graph_error(status, text));
+            }
+            let page = parse_install_report(&serde_json::from_str(&text)?)?;
+            let received = page.rows.len();
+            rows.extend(page.rows);
+            if received == 0 || rows.len() >= page.total {
+                return Ok(rows);
+            }
+        }
+    }
+
     async fn get_all_pages<T>(&self, initial_url: &str) -> Result<Vec<T>, AppError>
     where
         T: serde::de::DeserializeOwned,
@@ -532,5 +696,74 @@ impl<'a> GraphClient<'a> {
 
         // Should not reach here, but return last response if we do
         Ok(last_resp.unwrap())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::StatusCode;
+    use serde_json::json;
+
+    #[test]
+    fn parses_report_rows_by_column_name_not_position() {
+        let body = json!({"TotalRowCount": 1,
+            "Schema": [{"Column": "HexErrorCode"}, {"Column": "DeviceId"}, {"Column": "DeviceName"},
+                       {"Column": "AppInstallState_loc"}, {"Column": "AppInstallStateDetails_loc"},
+                       {"Column": "LastModifiedDateTime"}, {"Column": "AppVersion"}],
+            "Values": [["0x87D30066", "abc", "LAB-R-07", "Failed", "Failed to download content.", "2026-11-04T19:36:07", "2.15.0000"]]});
+        let page = parse_install_report(&body).unwrap();
+        assert_eq!(page.total, 1);
+        let row = &page.rows[0];
+        assert_eq!(row.device_id.as_deref(), Some("abc"));
+        assert_eq!(row.device_name.as_deref(), Some("LAB-R-07"));
+        assert_eq!(row.install_state.as_deref(), Some("Failed"));
+        assert_eq!(row.state_detail.as_deref(), Some("Failed to download content."));
+        assert_eq!(row.error_code.as_deref(), Some("0x87D30066"));
+        assert_eq!(row.app_version.as_deref(), Some("2.15.0000"));
+    }
+
+    #[test]
+    fn report_times_without_an_offset_are_utc() {
+        let body = json!({"TotalRowCount": 2, "Schema": [{"Column": "LastModifiedDateTime"}],
+            "Values": [["2026-10-26T15:15:47"], ["2026-10-26T15:15:47+02:00"]]});
+        let page = parse_install_report(&body).unwrap();
+        assert_eq!(page.rows[0].last_reported.as_deref(), Some("2026-10-26T15:15:47Z"));
+        assert_eq!(page.rows[1].last_reported.as_deref(), Some("2026-10-26T15:15:47+02:00"));
+    }
+
+    #[test]
+    fn treats_missing_columns_and_nulls_and_blanks_as_none() {
+        let body = json!({"TotalRowCount": 1, "Schema": [{"Column": "DeviceName"}, {"Column": "HexErrorCode"}],
+            "Values": [[null, ""]]});
+        let row = &parse_install_report(&body).unwrap().rows[0];
+        assert_eq!(row.device_name, None);
+        assert_eq!(row.error_code, None);
+        assert_eq!(row.device_id, None);
+    }
+
+    #[test]
+    fn empty_report_has_no_rows() {
+        let body = json!({"TotalRowCount": 0, "Schema": [{"Column": "DeviceId"}], "Values": []});
+        let page = parse_install_report(&body).unwrap();
+        assert!(page.rows.is_empty());
+        assert_eq!(page.total, 0);
+    }
+
+    #[test]
+    fn report_without_schema_is_an_error() {
+        assert!(parse_install_report(&json!({"error": "x"})).is_err());
+    }
+
+    #[test]
+    fn rejects_quote_in_app_id() {
+        assert!(validate_app_id("a' or '1'='1").is_err());
+        assert!(validate_app_id("f7aa2cbf-19f4-4286-9d23-77538b8bbfd6").is_ok());
+    }
+
+    #[test]
+    fn forbidden_maps_to_missing_permission() {
+        assert!(matches!(graph_error(StatusCode::FORBIDDEN, "x".into()), AppError::MissingPermission));
+        assert!(matches!(graph_error(StatusCode::BAD_REQUEST, "x".into()), AppError::Graph(_)));
     }
 }

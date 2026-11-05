@@ -9,6 +9,12 @@ const FOLDERS_KEY = "deviceListFolders";
 const CSV_COLUMNS_KEY = "csvExportColumns";
 const IDENTIFIER_FIELD_KEY = "exportIdentifierField";
 const EXPORT_FORMAT_KEY = "exportFormat";
+const BOARD_SELECTION_KEY = "installBoardSelection";
+const BOARD_NOTIFY_KEY = "installBoardNotify";
+const AUTO_REFRESH_KEY = "deviceAutoRefreshMinutes";
+
+/** Minutes between automatic device reloads; 0 is off */
+export const AUTO_REFRESH_OPTIONS = [0, 5, 15, 30, 60] as const;
 
 export const loadSavedLists = (): DeviceList[] => {
   try {
@@ -107,4 +113,37 @@ export const loadExportFormat = (): ExportFormat => {
 
 export const saveExportFormat = (format: ExportFormat) => {
   localStorage.setItem(EXPORT_FORMAT_KEY, format);
+};
+
+export const loadBoardSelection = (): { appId: string | null; listIds: string[] } => {
+  try {
+    const raw = localStorage.getItem(BOARD_SELECTION_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return {
+      appId: typeof parsed?.appId === "string" ? parsed.appId : null,
+      listIds: Array.isArray(parsed?.listIds) ? parsed.listIds : [],
+    };
+  } catch {
+    return { appId: null, listIds: [] };
+  }
+};
+
+export const saveBoardSelection = (selection: { appId: string | null; listIds: string[] }) => {
+  localStorage.setItem(BOARD_SELECTION_KEY, JSON.stringify(selection));
+};
+
+export const loadAutoRefreshMinutes = (): number => {
+  const saved = Number(localStorage.getItem(AUTO_REFRESH_KEY));
+  return (AUTO_REFRESH_OPTIONS as readonly number[]).includes(saved) ? saved : 0;
+};
+
+export const saveAutoRefreshMinutes = (minutes: number) => {
+  localStorage.setItem(AUTO_REFRESH_KEY, String(minutes));
+};
+
+/** On unless turned off: notifications were asked for */
+export const loadBoardNotify = (): boolean => localStorage.getItem(BOARD_NOTIFY_KEY) !== "false";
+
+export const saveBoardNotify = (on: boolean) => {
+  localStorage.setItem(BOARD_NOTIFY_KEY, String(on));
 };

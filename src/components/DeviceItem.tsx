@@ -1,9 +1,10 @@
-import { memo } from "react";
+import { memo, type CSSProperties } from "react";
 import Icon from "@mdi/react";
 import { mdiCheckboxBlankOutline, mdiCheckboxMarked } from "@mdi/js";
 import type { DeviceInfo } from "../types";
 import { formatDate, getOsIcon, isStaleSync, relativeTime, STALE_SYNC_DAYS } from "../utils/device";
 import { activateOnKey } from "../utils/keyboard";
+import { tagColors } from "../utils/tagColor";
 
 interface ListTag {
   name: string;
@@ -81,18 +82,23 @@ const DeviceItem = memo<DeviceItemProps>(
             {isMissing && <div className="device-sync">Device not found in Intune</div>}
             {visibleTags.length > 0 && (
               <div className="device-list-tags">
-                {visibleTags.map((tag) => (
-                  <span
-                    key={tag.name}
-                    className="device-list-tag"
-                    title={tag.name}
-                    // A list's own colour is unreadable on the selected row's blue
-                    style={tag.color && !isSelected ? {
-                      background: `${tag.color}20`,
-                      color: tag.color,
-                    } : undefined}
-                  >{tag.name}</span>
-                ))}
+                {visibleTags.map((tag) => {
+                  // A list's own colour is unreadable on the selected row's blue
+                  const colors = tag.color && !isSelected ? tagColors(tag.color) : null;
+                  return (
+                    <span
+                      key={tag.name}
+                      className={`device-list-tag${colors ? " colored" : ""}`}
+                      title={tag.name}
+                      style={colors ? {
+                        "--tag-bg-light": colors.light.bg,
+                        "--tag-fg-light": colors.light.fg,
+                        "--tag-bg-dark": colors.dark.bg,
+                        "--tag-fg-dark": colors.dark.fg,
+                      } as CSSProperties : undefined}
+                    >{tag.name}</span>
+                  );
+                })}
                 {hiddenTags.length > 0 && (
                   <span
                     className="device-list-tag device-list-tag-more"

@@ -158,7 +158,7 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
   const handleDeleteDevice = async (device: AutopilotDevice) => {
     if (!(await confirm(`Delete Autopilot device "${device.serialNumber || device.id}"? This cannot be undone.`)))
       return;
-    showToast(`Deleting ${device.serialNumber || device.id}...`, "info");
+    showToast(`Deleting ${device.serialNumber || device.id}…`, "info");
     try {
       await invoke("delete_autopilot_device", { deviceId: device.id });
       setAutopilotDevices((prev) => prev.filter((d) => d.id !== device.id));
@@ -197,7 +197,7 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
   };
 
   const handleUpdateGroupTag = async (deviceId: string, groupTag: string) => {
-    showToast("Updating group tag...", "info");
+    showToast("Updating group tag…", "info");
     try {
       await invoke("update_autopilot_group_tag", { deviceId, groupTag });
       setAutopilotDevices((prev) =>
@@ -301,7 +301,7 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
 
       if (!(await confirm(`Import ${entries.length} device(s) into Autopilot?`))) return;
 
-      showToast(`Importing ${entries.length} device(s)...`, "info");
+      showToast(`Importing ${entries.length} device(s)…`, "info");
 
       const results = await invoke<AutopilotImportResult[]>("import_autopilot_devices", {
         entries,
@@ -336,7 +336,7 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
     return (
       <div className="autopilot-loading">
         <span className="spinner dark large" />
-        <p>Loading Autopilot devices...</p>
+        <p>Loading Autopilot devices…</p>
       </div>
     );
   }
@@ -371,7 +371,8 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
                   <div className="bulk-list-menu-new">
                     <input
                       type="text"
-                      placeholder="Group tag..."
+                      aria-label="Group tag for selected devices"
+                      placeholder="Group tag…"
                       value={bulkGroupTag}
                       onChange={(e) => setBulkGroupTag(e.target.value)}
                       onKeyDown={(e) => {
@@ -394,7 +395,7 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
         </div>
       )}
 
-      <div className="main-content">
+      <main className="main-content">
         {/* Sidebar with autopilot device list */}
         <div className="sidebar">
           <div className="autopilot-sidebar-header">
@@ -420,7 +421,8 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
           <div className="search-box">
             <input
               type="text"
-              placeholder="Search Autopilot devices..."
+              aria-label="Search Autopilot devices"
+              placeholder="Search Autopilot devices…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -449,7 +451,7 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
                     : "Select all"}
                 </span>
               </button>
-              <span className="search-count">{sortedDevices.length} devices</span>
+              <span className="search-count">{sortedDevices.length} device{sortedDevices.length === 1 ? "" : "s"}</span>
             </div>
           </div>
 
@@ -507,7 +509,7 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
                           </button>
                           <div className="device-item-text">
                             <div className="device-name">
-                              {device.serialNumber || device.id.substring(0, 8) + "..."}
+                              {device.serialNumber || device.id.substring(0, 8) + "…"}
                             </div>
                             <div className="device-sync">
                               {device.model
@@ -578,6 +580,7 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
                       <span className="group-tag-edit">
                         <input
                           type="text"
+                          aria-label="Group tag"
                           value={editingGroupTag.value}
                           onChange={(e) =>
                             setEditingGroupTag({ ...editingGroupTag, value: e.target.value })
@@ -588,7 +591,7 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
                             if (e.key === "Escape") setEditingGroupTag(null);
                           }}
                           autoFocus
-                          placeholder="Enter group tag..."
+                          placeholder="Enter group tag…"
                         />
                         <button
                           className="btn-primary btn-small"
@@ -684,7 +687,7 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
             </div>
           )}
         </div>
-      </div>
+      </main>
 
       {/* Group tag edit modal - for inline editing */}
       {editingGroupTag && !selectedDevice && (
@@ -693,13 +696,14 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
             <div className="modal-list">
               <input
                 type="text"
+                aria-label="Group tag"
                 value={editingGroupTag.value}
                 onChange={(e) => setEditingGroupTag({ ...editingGroupTag, value: e.target.value })}
                 onKeyDown={(e) => {
                   if (e.key === "Enter")
                     handleUpdateGroupTag(editingGroupTag.id, editingGroupTag.value);
                 }}
-                placeholder="Enter group tag..."
+                placeholder="Enter group tag…"
                 autoFocus
               />
             </div>
@@ -724,12 +728,13 @@ function AutopilotView({ showToast, updateProgress, isActive, devices, onNavigat
             <p className="destructive-confirm-text">
               You are about to delete <strong>{deleteConfirm.count}</strong> Autopilot device(s). This cannot be undone.
             </p>
-            <p className="destructive-confirm-text">
+            <p className="destructive-confirm-text" id="autopilot-delete-confirm-label">
               Type <strong className="destructive-confirm-phrase">I really want to delete {deleteConfirm.count} devices</strong> to confirm:
             </p>
             <input
               className="destructive-confirm-input"
               type="text"
+              aria-labelledby="autopilot-delete-confirm-label"
               value={deleteConfirm.input}
               onChange={(e) => setDeleteConfirm({ ...deleteConfirm, input: e.target.value })}
               onKeyDown={(e) => {

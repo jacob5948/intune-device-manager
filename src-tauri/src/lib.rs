@@ -1,6 +1,6 @@
 mod graph;
 
-use graph::{acquire_token, AppError, AppState, AutopilotDevice, AutopilotImportEntry, AutopilotImportResult, CachedToken, Credentials, DeviceInfo, GraphClient};
+use graph::{acquire_token, AppError, AppState, AutopilotDevice, AutopilotImportEntry, AutopilotImportResult, AppInstallStatus, CachedToken, Credentials, DeviceInfo, GraphClient, MobileAppSummary};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
@@ -93,6 +93,20 @@ async fn get_devices(state: State<'_>) -> Result<Vec<DeviceInfo>, AppError> {
     let (http_client, token) = get_client_and_token(&state).await?;
     let client = GraphClient::new(&http_client, token);
     client.get_managed_devices().await
+}
+
+#[tauri::command]
+async fn get_mobile_apps(state: State<'_>) -> Result<Vec<MobileAppSummary>, AppError> {
+    let (http_client, token) = get_client_and_token(&state).await?;
+    let client = GraphClient::new(&http_client, token);
+    client.get_mobile_apps().await
+}
+
+#[tauri::command]
+async fn get_app_install_statuses(state: State<'_>, app_id: String) -> Result<Vec<AppInstallStatus>, AppError> {
+    let (http_client, token) = get_client_and_token(&state).await?;
+    let client = GraphClient::new(&http_client, token);
+    client.get_app_install_statuses(&app_id).await
 }
 
 #[tauri::command]
@@ -208,6 +222,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // The updater has no mobile implementation, so it is registered here
             // rather than in the unconditional chain above.
@@ -222,6 +237,8 @@ pub fn run() {
             logout,
             get_devices,
             get_device,
+            get_mobile_apps,
+            get_app_install_statuses,
             sync_device,
             restart_device,
             wipe_device,

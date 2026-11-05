@@ -318,6 +318,7 @@ const ImportModal = ({ devices, lists, onCommit, onClose, showToast }: ImportMod
                 type="text"
                 value={dest.name}
                 onChange={(e) => setDest({ kind: "new", name: e.target.value })}
+                aria-label="New list name"
                 placeholder="List name"
               />
             )}

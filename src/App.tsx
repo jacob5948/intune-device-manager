@@ -4,6 +4,7 @@ import { confirm } from "@tauri-apps/plugin-dialog";
 import Icon from "@mdi/react";
 import {
   mdiDevices,
+  mdiPackageDown,
   mdiChevronDown,
   mdiChevronRight,
   mdiCog,
@@ -28,7 +29,10 @@ import {
 } from "@mdi/js";
 import "./App.css";
 import type { DeviceInfo, RemediationScript, DeviceList, DeviceListFolder, Toast } from "./types";
-import { loadSavedLists, saveLists, loadSavedFolders, saveFolders, loadSavedScripts, saveScripts } from "./hooks/useLocalStorage";
+import {
+  loadSavedLists, saveLists, loadSavedFolders, saveFolders, loadSavedScripts, saveScripts,
+  AUTO_REFRESH_OPTIONS, loadAutoRefreshMinutes, saveAutoRefreshMinutes,
+} from "./hooks/useLocalStorage";
 import { normalizeOs, isWindows, getOsIcon, extractOu, formatDate, formatManagementState, isStaleSync, matchIdentifiers, relativeTimeLong } from "./utils/device";
 import type { ExportScope } from "./utils/exportPayload";
 import { idsBetween, placeList, reorderIds } from "./utils/reorder";
@@ -36,10 +40,13 @@ import { useAppUpdate } from "./hooks/useAppUpdate";
 import DeviceItem from "./components/DeviceItem";
 import UpdateBanner from "./components/UpdateBanner";
 import AutopilotView from "./components/AutopilotView";
+import InstallBoardView from "./components/InstallBoardView";
 import ImportModal, { type ImportPlan } from "./components/ImportModal";
 import ExportModal from "./components/ExportModal";
 import Modal from "./components/Modal";
 import { activateOnKey } from "./utils/keyboard";
+
+const LIST_COLORS = ["#ff3b30", "#ff9500", "#ffcc00", "#34c759", "#00c7be", "#007aff", "#5856d6", "#af52de"];
 
 
 interface BulkTargets {
@@ -64,6 +71,8 @@ function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("All");
   const [loading, setLoading] = useState(false);
+  const loadingRef = useRef(false);
+  const [autoRefreshMinutes, setAutoRefreshMinutes] = useState(loadAutoRefreshMinutes);
   const [loggingIn, setLoggingIn] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const [showRemediation, setShowRemediation] = useState(false);
@@ -96,7 +105,7 @@ function App() {
   const [listDrag, setListDrag] = useState<{ kind: "list" | "folder"; id: string; target: ListDropTarget | null } | null>(null);
   /** Where a shift-click range starts: the last list clicked without shift */
   const listSelectAnchor = useRef<string | null>(null);
-  const [activeView, setActiveView] = useState<"devices" | "autopilot">("devices");
+  const [activeView, setActiveView] = useState<"devices" | "autopilot" | "installs">("devices");
 
   const update = useAppUpdate();
 
@@ -105,8 +114,9 @@ function App() {
   const showToast = useCallback((message: string, type: Toast["type"], progress?: { current: number; total: number }) => {
     if (toastTimer.current) { clearTimeout(toastTimer.current); toastTimer.current = null; }
     setToast({ message, type, progress });
-    // "info" toasts persist until replaced by success/error
-    if (type !== "info") {
+    // Only success toasts time out: "info" is replaced when the work finishes, and an
+    // error stays until dismissed so there is time to read what failed
+    if (type === "success") {
       toastTimer.current = setTimeout(() => setToast(null), 4000);
     }
   }, []);
@@ -135,16 +145,29 @@ function App() {
   }, []);
 
   const loadDevices = useCallback(async () => {
+    loadingRef.current = true;
     setLoading(true);
     try {
       const result = await invoke<DeviceInfo[]>("get_devices");
       setDevices(result);
     } catch (e) {
-      showToast(`Failed to load devices: ${e}`, "error");
+      showToast(`Couldn't load devices: ${String(e).replace(/\.$/, "")}. Check your connection, then select Refresh.`, "error");
     } finally {
+      loadingRef.current = false;
       setLoading(false);
     }
   }, [showToast]);
+
+  // Timed reloads skip while one is running or the window is hidden, so a
+  // minimised app doesn't keep pulling every device from Graph
+  useEffect(() => {
+    saveAutoRefreshMinutes(autoRefreshMinutes);
+    if (!isAuthenticated || autoRefreshMinutes === 0) return;
+    const timer = window.setInterval(() => {
+      if (!loadingRef.current && !document.hidden) loadDevices();
+    }, autoRefreshMinutes * 60_000);
+    return () => window.clearInterval(timer);
+  }, [isAuthenticated, autoRefreshMinutes, loadDevices]);
 
   // Re-evaluate "missing:" entries in device lists when devices are refreshed
   useEffect(() => {
@@ -178,8 +201,13 @@ function App() {
   }, [devices]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleLogin = async () => {
-    if (!tenantId || !clientId || !clientSecret) {
-      showToast("Please fill in all fields", "error");
+    const missing = [
+      !tenantId && "tenant ID",
+      !clientId && "client ID",
+      !clientSecret && "client secret",
+    ].filter(Boolean);
+    if (missing.length > 0) {
+      showToast(`Enter your ${new Intl.ListFormat("en", { type: "conjunction" }).format(missing as string[])} to sign in.`, "error");
       return;
     }
 
@@ -209,10 +237,10 @@ function App() {
         clientSecret,
       });
       setIsAuthenticated(true);
-      showToast("Authenticated successfully", "success");
+      showToast("Signed in", "success");
       loadDevices();
     } catch (e) {
-      showToast(`Authentication failed: ${e}`, "error");
+      showToast(`Couldn't sign in: ${String(e).replace(/\.$/, "")}. Check the tenant ID, client ID and client secret, then try again.`, "error");
     } finally {
       setLoggingIn(false);
     }
@@ -237,8 +265,19 @@ function App() {
       });
   }, []);
 
+  // Opens a device on the Devices tab from another view (Autopilot, App installs)
+  const navigateToDevice = (deviceId: string) => {
+    const device = devices.find(d => d.id === deviceId);
+    if (device) {
+      setActiveView("devices");
+      setActiveTab("All");
+      setSelectedLists(new Set());
+      handleSelectDevice(device);
+    }
+  };
+
   const handleSync = async (device: DeviceInfo) => {
-    showToast(`Syncing ${device.deviceName}...`, "info");
+    showToast(`Syncing ${device.deviceName}…`, "info");
     try {
       await invoke("sync_device", { deviceId: device.id });
       showToast(`Sync initiated for ${device.deviceName}`, "success");
@@ -249,7 +288,7 @@ function App() {
 
   const handleRestart = async (device: DeviceInfo) => {
     if (!(await confirm(`Are you sure you want to restart ${device.deviceName}?`))) return;
-    showToast(`Restarting ${device.deviceName}...`, "info");
+    showToast(`Restarting ${device.deviceName}…`, "info");
     try {
       await invoke("restart_device", { deviceId: device.id });
       showToast(`Restart initiated for ${device.deviceName}`, "success");
@@ -275,7 +314,7 @@ function App() {
     if (!(await confirmLargeBatch(targets.length, "wipe"))) return;
 
     if (targets.length === 1) {
-      showToast(`Wiping ${targets[0].deviceName}...`, "info");
+      showToast(`Wiping ${targets[0].deviceName}…`, "info");
       try {
         await invoke("wipe_device", { deviceId: targets[0].id });
         showToast(`Wipe initiated for ${targets[0].deviceName}`, "success");
@@ -860,7 +899,7 @@ function App() {
       );
       endBulkAction();
     } else if (selectedDevice) {
-      showToast(`Running "${selectedScript.displayName}" on ${selectedDevice.deviceName}...`, "info");
+      showToast(`Running "${selectedScript.displayName}" on ${selectedDevice.deviceName}…`, "info");
       try {
         await invoke("run_remediation", {
           scriptId: selectedScript.id,
@@ -1058,7 +1097,7 @@ function App() {
           id,
           deviceName: id.startsWith("missing:")
             ? `[Not found] ${id.substring(8)}`
-            : `[Not found] ${id.substring(0, 8)}...`,
+            : `[Not found] ${id.substring(0, 8)}…`,
           userPrincipalName: null,
           serialNumber: null,
           operatingSystem: null,
@@ -1139,11 +1178,20 @@ function App() {
   };
 
 
+  // Graph's complianceState values, worded for people
+  const COMPLIANCE_LABELS: Record<string, string> = {
+    ingraceperiod: "In grace period",
+    conflict: "Conflict",
+    error: "Error",
+    configmanager: "Config Manager",
+  };
+
   const complianceBadge = (state: string | null) => {
     const s = (state || "unknown").toLowerCase();
     if (s === "compliant") return <span className="badge compliant">Compliant</span>;
     if (s === "noncompliant") return <span className="badge noncompliant">Non-compliant</span>;
-    return <span className="badge unknown">{state || "Unknown"}</span>;
+    const label = COMPLIANCE_LABELS[s] ?? "Unknown";
+    return <span className="badge unknown">{label}</span>;
   };
 
   // Render a single list item (used in both folder and root contexts)
@@ -1191,6 +1239,7 @@ function App() {
         {renamingList?.id === list.id ? (
           <input
             className="list-rename-input"
+            aria-label="List name"
             value={renamingList.name}
             onChange={(e) => setRenamingList({ ...renamingList, name: e.target.value })}
             onKeyDown={(e) => {
@@ -1215,6 +1264,36 @@ function App() {
       </div>
     );
   };
+
+  // The region stays mounted so screen readers announce each new message
+  const toastRegion = (
+    <div role="status">
+      {toast && (
+        <div className={`toast ${toast.type}`}>
+          <div className="toast-body">
+            <span>{toast.message}</span>
+            {toast.type === "error" && (
+              <button
+                className="toast-dismiss"
+                onClick={() => setToast(null)}
+                title="Dismiss" aria-label="Dismiss notification"
+              >
+                <Icon path={mdiClose} size={0.6} />
+              </button>
+            )}
+          </div>
+          {toast.progress && (
+            <div className="toast-progress">
+              <div
+                className="toast-progress-bar"
+                style={{ width: `${(toast.progress.current / toast.progress.total) * 100}%` }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 
   // Login screen
   if (!isAuthenticated) {
@@ -1268,26 +1347,14 @@ function App() {
               disabled={loggingIn}
             >
               {loggingIn ? (
-                <><span className="spinner" />Authenticating...</>
+                <><span className="spinner" />Signing in…</>
               ) : (
                 "Sign in"
               )}
             </button>
           </div>
         </div>
-        {toast && (
-          <div className={`toast ${toast.type}`}>
-            <span>{toast.message}</span>
-            {toast.progress && (
-              <div className="toast-progress">
-                <div
-                  className="toast-progress-bar"
-                  style={{ width: `${(toast.progress.current / toast.progress.total) * 100}%` }}
-                />
-              </div>
-            )}
-          </div>
-        )}
+        {toastRegion}
       </div>
     );
   }
@@ -1301,7 +1368,7 @@ function App() {
         </div>
         <div className="loading-screen">
           <span className="spinner dark large" />
-          <p>Loading devices...</p>
+          <p>Loading devices…</p>
         </div>
       </div>
     );
@@ -1318,6 +1385,7 @@ function App() {
             <button
               className={`view-switch-btn${activeView === "devices" ? " active" : ""}`}
               onClick={() => setActiveView("devices")}
+              aria-pressed={activeView === "devices"}
             >
               <Icon path={mdiDevices} size={0.6} />
               Devices
@@ -1325,9 +1393,18 @@ function App() {
             <button
               className={`view-switch-btn${activeView === "autopilot" ? " active" : ""}`}
               onClick={() => setActiveView("autopilot")}
+              aria-pressed={activeView === "autopilot"}
             >
               <Icon path={mdiSync} size={0.6} />
               Autopilot
+            </button>
+            <button
+              className={`view-switch-btn${activeView === "installs" ? " active" : ""}`}
+              onClick={() => setActiveView("installs")}
+              aria-pressed={activeView === "installs"}
+            >
+              <Icon path={mdiPackageDown} size={0.6} />
+              App installs
             </button>
           </div>
           {activeView === "devices" && (
@@ -1336,7 +1413,7 @@ function App() {
               onClick={() => loadDevices()}
               disabled={loading}
             >
-              {loading ? <><span className="spinner" />Refreshing...</> : "Refresh"}
+              {loading ? <><span className="spinner" />Refreshing…</> : "Refresh"}
             </button>
           )}
           <button
@@ -1359,6 +1436,7 @@ function App() {
             key={tab}
             className={`tab ${activeTab === tab ? "active" : ""}`}
             onClick={() => { setActiveTab(tab); setSelectedDevice(null); }}
+            aria-pressed={activeTab === tab}
           >
             <Icon path={tabIconPath(tab)} size={0.6} />
             {tab}
@@ -1370,20 +1448,15 @@ function App() {
       </div>
       )}
 
+      <div style={{ display: activeView === "installs" ? "contents" : "none" }}>
+        <InstallBoardView isActive={activeView === "installs"} devices={devices} deviceLists={deviceLists} onOpenDevice={navigateToDevice} />
+      </div>
       <div style={{ display: activeView === "autopilot" ? "contents" : "none" }}>
-        <AutopilotView showToast={showToast} updateProgress={updateProgress} isActive={activeView === "autopilot"} devices={devices} onNavigateToDevice={(deviceId: string) => {
-          const device = devices.find(d => d.id === deviceId);
-          if (device) {
-            setActiveView("devices");
-            setActiveTab("All");
-            setSelectedLists(new Set());
-            handleSelectDevice(device);
-          }
-        }} />
+        <AutopilotView showToast={showToast} updateProgress={updateProgress} isActive={activeView === "autopilot"} devices={devices} onNavigateToDevice={navigateToDevice} />
       </div>
 
       {activeView === "devices" && (
-      <div className="main-content">
+      <main className="main-content">
         <div className="sidebar">
           {/* Custom lists */}
           <div className="lists-section">
@@ -1477,6 +1550,7 @@ function App() {
                     {renamingFolder?.id === folder.id ? (
                       <input
                         className="list-rename-input"
+                        aria-label="Folder name"
                         value={renamingFolder.name}
                         onChange={(e) => setRenamingFolder({ ...renamingFolder, name: e.target.value })}
                         onKeyDown={(e) => {
@@ -1562,7 +1636,8 @@ function App() {
           <div className="search-box">
             <input
               type="text"
-              placeholder="Search devices..."
+              aria-label="Search devices"
+              placeholder="Search devices…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -1583,7 +1658,7 @@ function App() {
                   </button>
                 );
               })()}
-              <span className="search-count">{sortedDevices.length} devices</span>
+              <span className="search-count">{sortedDevices.length} device{sortedDevices.length === 1 ? "" : "s"}</span>
             </div>
           </div>
           <div className="device-list">
@@ -1644,51 +1719,7 @@ function App() {
                   )}
                 </span>
               </div>
-              <div className="bulk-actions-group">
-                <button
-                  className="bulk-btn"
-                  title="Sync"
-                  aria-label="Sync"
-                  onClick={handleBulkSync}
-                  disabled={checkedWindowsDevices.length === 0}
-                >
-                  <Icon path={mdiSync} size={0.65} />
-                  <span>Sync</span>
-                </button>
-                <div className="bulk-divider" />
-                <button
-                  className="bulk-btn"
-                  title="Restart"
-                  aria-label="Restart"
-                  onClick={handleBulkRestart}
-                  disabled={checkedWindowsDevices.length === 0}
-                >
-                  <Icon path={mdiRestart} size={0.65} />
-                  <span>Restart</span>
-                </button>
-                <div className="bulk-divider" />
-                <button
-                  className="bulk-btn"
-                  title="Run remediation"
-                  aria-label="Run remediation"
-                  onClick={handleBulkRemediation}
-                  disabled={checkedWindowsDevices.length === 0}
-                >
-                  <Icon path={mdiScriptTextPlay} size={0.65} />
-                  <span>Run remediation</span>
-                </button>
-                <div className="bulk-divider" />
-                <button
-                  className="bulk-btn"
-                  title="Export"
-                  aria-label="Export"
-                  onClick={() => openExport({ kind: "selected" }, singleSelectedList)}
-                  disabled={checkedList.length === 0}
-                >
-                  <Icon path={mdiExport} size={0.65} />
-                  <span>Export…</span>
-                </button>
-                <div className="bulk-divider" />
+              <div className="bulk-actions-group" role="group" aria-label="Selection">
                 {selectedListObjs.length > 0 ? (
                   <button
                     className="bulk-btn"
@@ -1733,7 +1764,8 @@ function App() {
                         <div className="bulk-list-menu-new">
                           <input
                             type="text"
-                            placeholder="New list name..."
+                            aria-label="New list name"
+                            placeholder="New list name…"
                             value={newListName}
                             onChange={(e) => setNewListName(e.target.value)}
                             onKeyDown={(e) => { if (e.key === "Enter") { createList(true); } }}
@@ -1747,23 +1779,65 @@ function App() {
                     )}
                   </div>
                 )}
+                <button
+                  className="bulk-btn"
+                  title="Export"
+                  aria-label="Export"
+                  onClick={() => openExport({ kind: "selected" }, singleSelectedList)}
+                  disabled={checkedList.length === 0}
+                >
+                  <Icon path={mdiExport} size={0.65} />
+                  <span>Export…</span>
+                </button>
               </div>
-              {/* Outside the group, so it holds the end of the bar whatever the other labels do */}
-              <button
-                className="bulk-btn bulk-btn-danger"
-                onClick={handleBulkWipe}
-                disabled={checkedWindowsDevices.length === 0}
-              >
-                <Icon path={mdiCellphoneRemove} size={0.65} />
-                <span>Wipe</span>
-              </button>
+              {/* Commands sent to the devices through Intune, kept apart from the selection actions */}
+              <div className="bulk-actions-group bulk-actions-device" role="group" aria-label="Device commands">
+                <button
+                  className="bulk-btn"
+                  title="Send a sync command to the selected devices"
+                  aria-label="Sync"
+                  onClick={handleBulkSync}
+                  disabled={checkedWindowsDevices.length === 0}
+                >
+                  <Icon path={mdiSync} size={0.65} />
+                  <span>Sync</span>
+                </button>
+                <button
+                  className="bulk-btn"
+                  title="Restart the selected devices"
+                  aria-label="Restart"
+                  onClick={handleBulkRestart}
+                  disabled={checkedWindowsDevices.length === 0}
+                >
+                  <Icon path={mdiRestart} size={0.65} />
+                  <span>Restart</span>
+                </button>
+                <button
+                  className="bulk-btn"
+                  title="Run a remediation script on the selected devices"
+                  aria-label="Run remediation"
+                  onClick={handleBulkRemediation}
+                  disabled={checkedWindowsDevices.length === 0}
+                >
+                  <Icon path={mdiScriptTextPlay} size={0.65} />
+                  <span>Run remediation</span>
+                </button>
+                <button
+                  className="bulk-btn bulk-btn-danger"
+                  onClick={handleBulkWipe}
+                  disabled={checkedWindowsDevices.length === 0}
+                >
+                  <Icon path={mdiCellphoneRemove} size={0.65} />
+                  <span>Wipe</span>
+                </button>
+              </div>
             </div>
           )}
           {selectedDevice ? (
             <div className="device-detail">
               {/* Intune-style action toolbar */}
               {checkedDevices.size > 0 ? null : isWindows(selectedDevice) ? (
-                <div className="action-toolbar">
+                <div className="action-toolbar" role="group" aria-label="Device commands">
                   <button
                     className="toolbar-btn"
                     onClick={() => handleSync(selectedDevice)}
@@ -1851,7 +1925,7 @@ function App() {
             <div className="no-selection">Select a device to view details</div>
           )}
         </div>
-      </div>
+      </main>
       )}
 
       {importOpen && (
@@ -1890,12 +1964,13 @@ function App() {
                 <div key={l.id} className="wipe-target">{l.name}</div>
               ))}
           </div>
-          <p className="destructive-confirm-text">
+          <p className="destructive-confirm-text" id="delete-lists-confirm-label">
             Type <strong className="destructive-confirm-phrase">{deleteListsPhrase(deleteListsConfirm.ids.length)}</strong> to confirm:
           </p>
           <input
             className="destructive-confirm-input"
             type="text"
+            aria-labelledby="delete-lists-confirm-label"
             value={deleteListsConfirm.input}
             onChange={(e) => setDeleteListsConfirm({ ...deleteListsConfirm, input: e.target.value })}
             onKeyDown={(e) => { if (e.key === "Enter") executeDeleteLists(); }}
@@ -1936,12 +2011,13 @@ function App() {
                 </div>
               )}
             </div>
-            <p className="destructive-confirm-text">
+            <p className="destructive-confirm-text" id="wipe-confirm-label">
               Type <strong className="destructive-confirm-phrase">{wipePhrase(wipeConfirm.targets.length)}</strong> to confirm:
             </p>
             <input
               className="destructive-confirm-input"
               type="text"
+              aria-labelledby="wipe-confirm-label"
               value={wipeConfirm.input}
               onChange={(e) => setWipeConfirm({ ...wipeConfirm, input: e.target.value })}
               onKeyDown={(e) => {
@@ -2026,12 +2102,14 @@ function App() {
               <div className="script-add-form">
                 <input
                   type="text"
+                  aria-label="Script policy ID"
                   placeholder="Policy ID (e.g. guid_1)"
                   value={newScriptId}
                   onChange={(e) => setNewScriptId(e.target.value)}
                 />
                 <input
                   type="text"
+                  aria-label="Script display name"
                   placeholder="Display name"
                   value={newScriptName}
                   onChange={(e) => setNewScriptName(e.target.value)}
@@ -2068,6 +2146,27 @@ function App() {
             </div>
 
             <div className="settings-section">
+              <h4>Device list</h4>
+              <p className="settings-hint">
+                Reload devices from Intune on a timer. It pauses while the app is hidden.
+                The App installs tab checks its own app every 3 minutes while it is open.
+              </p>
+              <div className="settings-update-row">
+                <label htmlFor="auto-refresh">Refresh devices automatically</label>
+                <select
+                  id="auto-refresh"
+                  className="io-select"
+                  value={autoRefreshMinutes}
+                  onChange={(e) => setAutoRefreshMinutes(Number(e.target.value))}
+                >
+                  {AUTO_REFRESH_OPTIONS.map((m) => (
+                    <option key={m} value={m}>{m === 0 ? "Off" : m === 60 ? "Every hour" : `Every ${m} minutes`}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="settings-section">
               <h4>Updates</h4>
               <p className="settings-hint">
                 Updates are downloaded from GitHub Releases and verified before they are
@@ -2083,7 +2182,7 @@ function App() {
                   disabled={update.status === "checking" || update.status === "downloading"}
                 >
                   {update.status === "checking" ? (
-                    <><span className="spinner" />Checking...</>
+                    <><span className="spinner" />Checking…</>
                   ) : (
                     "Check for updates"
                   )}
@@ -2258,46 +2357,54 @@ function App() {
             </button>
             <div className="context-menu-separator" />
             <div className="context-menu-label">Color</div>
-            <div className="context-menu-colors">
-              {["#ff3b30", "#ff9500", "#ffcc00", "#34c759", "#00c7be", "#007aff", "#5856d6", "#af52de", "#ff2d55"].map((color) => {
-                const currentList = deviceLists.find((l) => l.id === listContextMenu.listId);
-                return (
-                  <button
-                    key={color}
-                    className={`color-swatch${currentList?.color === color ? " active" : ""}`}
-                    aria-label={`Color ${color}`}
-                    style={{ background: color }}
-                    onClick={() => {
-                      const updated = deviceLists.map((l) =>
-                        l.id === listContextMenu.listId ? { ...l, color } : l
-                      );
-                      setDeviceLists(updated);
-                      saveLists(updated);
-                      setListContextMenu(null);
-                    }}
-                  />
+            {(() => {
+              const currentList = deviceLists.find((l) => l.id === listContextMenu.listId);
+              const setColor = (color: string | null) => {
+                const updated = deviceLists.map((l) =>
+                  l.id === listContextMenu.listId ? { ...l, color } : l
                 );
-              })}
-              {(() => {
-                const currentList = deviceLists.find((l) => l.id === listContextMenu.listId);
-                return currentList?.color ? (
-                  <button
-                    className="color-swatch color-swatch-clear"
-                    title="Remove color" aria-label="Remove color"
-                    onClick={() => {
-                      const updated = deviceLists.map((l) =>
-                        l.id === listContextMenu.listId ? { ...l, color: null } : l
-                      );
-                      setDeviceLists(updated);
-                      saveLists(updated);
-                      setListContextMenu(null);
-                    }}
+                setDeviceLists(updated);
+                saveLists(updated);
+              };
+              const customColor = currentList?.color && !LIST_COLORS.includes(currentList.color)
+                ? currentList.color
+                : null;
+              return (
+                <div className="context-menu-colors">
+                  {LIST_COLORS.map((color) => (
+                    <button
+                      key={color}
+                      className={`color-swatch${currentList?.color === color ? " active" : ""}`}
+                      aria-label={`Color ${color}`}
+                      style={{ background: color }}
+                      onClick={() => { setColor(color); setListContextMenu(null); }}
+                    />
+                  ))}
+                  {/* The menu stays open so the system picker can update the colour live */}
+                  <label
+                    className={`color-swatch color-swatch-custom${customColor ? " active" : ""}`}
+                    title="Custom color"
+                    style={customColor ? { background: customColor } : undefined}
                   >
-                    <Icon path={mdiClose} size={0.4} />
-                  </button>
-                ) : null;
-              })()}
-            </div>
+                    <input
+                      type="color"
+                      aria-label="Custom color"
+                      value={currentList?.color ?? "#8e8e93"}
+                      onChange={(e) => setColor(e.target.value)}
+                    />
+                  </label>
+                  {currentList?.color && (
+                    <button
+                      className="color-swatch color-swatch-clear"
+                      title="Remove color" aria-label="Remove color"
+                      onClick={() => { setColor(null); setListContextMenu(null); }}
+                    >
+                      <Icon path={mdiClose} size={0.4} />
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
             {listFolders.length > 0 && (
               <>
                 <div className="context-menu-separator" />
@@ -2367,19 +2474,7 @@ function App() {
         </div>
       )}
 
-      {toast && (
-          <div className={`toast ${toast.type}`}>
-            <span>{toast.message}</span>
-            {toast.progress && (
-              <div className="toast-progress">
-                <div
-                  className="toast-progress-bar"
-                  style={{ width: `${(toast.progress.current / toast.progress.total) * 100}%` }}
-                />
-              </div>
-            )}
-          </div>
-        )}
+      {toastRegion}
     </div>
   );
 }

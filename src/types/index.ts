@@ -34,6 +34,24 @@ export interface DeviceList {
   color?: string | null;
 }
 
+/** Intune app, as offered by the install board's picker */
+export interface MobileAppSummary {
+  id: string;
+  displayName: string;
+  publisher: string | null;
+}
+
+/** What Intune reports about one app on one device */
+export interface AppInstallStatus {
+  deviceId: string | null;
+  deviceName: string | null;
+  installState: string | null;
+  stateDetail: string | null;
+  errorCode: string | null;
+  lastReported: string | null;
+  appVersion: string | null;
+}
+
 /** Toast notification */
 export interface Toast {
   message: string;
